@@ -10,12 +10,15 @@ import queue
 import glob
 import shutil
 from datetime import datetime
+import cv2
+from PIL import Image, ImageTk
+import json
 
 class AndroidControlApp:
     def __init__(self, root):
         self.root = root
         self.root.title("Android 设备控制与录制")
-        self.root.geometry("800x600")
+        self.root.geometry("1200x800")  # 增大窗口以容纳预览
         
         # 日志队列用于线程间通信
         self.log_queue = queue.Queue()
@@ -23,6 +26,21 @@ class AndroidControlApp:
         # 录制子进程
         self.record_process = None
         self.camera_ready = False  # 摄像头是否已准备就绪
+        
+        # 预览相关
+        self.preview_cap = None
+        self.preview_active = False
+        self.preview_thread = None
+        
+        # 文件名组件（先设置默认值，后面会从配置文件读取）
+        self.filename_parts = ["AnuraMM-5-MMA0V7230924002", "0000027", "1"]
+        self.last_recorded_video = None  # 最后录制的视频文件路径
+        
+        # 配置文件路径
+        self.config_file = self.get_config_path()
+        
+        # 从配置文件加载设置
+        self.load_config()
         
         # 设置UI
         self.setup_ui()
@@ -33,6 +51,83 @@ class AndroidControlApp:
         # 启动日志更新线程
         self.update_logs()
         
+    def get_config_path(self):
+        """获取配置文件路径，兼容Windows和Mac"""
+        system = platform.system()
+        
+        if system == "Windows":
+            # Windows: 使用用户文档目录
+            config_dir = os.path.join(os.path.expanduser("~"), "Documents", "AndroidControlApp")
+        elif system == "Darwin":  # macOS
+            # macOS: 使用用户应用支持目录
+            config_dir = os.path.join(os.path.expanduser("~"), "Library", "Application Support", "AndroidControlApp")
+        else:  # Linux 和其他
+            # Linux: 使用 .config 目录
+            config_dir = os.path.join(os.path.expanduser("~"), ".config", "AndroidControlApp")
+        
+        # 确保配置目录存在
+        if not os.path.exists(config_dir):
+            os.makedirs(config_dir)
+            
+        return os.path.join(config_dir, "config.json")
+        
+    def load_config(self):
+        """从配置文件加载设置"""
+        try:
+            if os.path.exists(self.config_file):
+                with open(self.config_file, 'r', encoding='utf-8') as f:
+                    config = json.load(f)
+                    
+                # 加载文件名配置
+                if 'filename_parts' in config:
+                    self.filename_parts = config['filename_parts']
+                    self.log(f"已加载配置: 文件名 = {'-'.join(self.filename_parts)}")
+                else:
+                    self.log("使用默认文件名配置")
+            else:
+                self.log("配置文件不存在，使用默认设置")
+                # 保存默认配置
+                self.save_config()
+                
+        except Exception as e:
+            self.log(f"加载配置文件失败: {str(e)}，使用默认设置")
+            
+    def save_config(self):
+        """保存设置到配置文件"""
+        try:
+            config = {
+                'filename_parts': self.filename_parts,
+                'last_updated': datetime.now().isoformat()
+            }
+            
+            with open(self.config_file, 'w', encoding='utf-8') as f:
+                json.dump(config, f, ensure_ascii=False, indent=2)
+                
+            self.log(f"配置已保存: {self.config_file}")
+            
+        except Exception as e:
+            self.log(f"保存配置文件失败: {str(e)}")
+            
+    def increment_filename_number(self):
+        """增加文件名编号并保存配置"""
+        try:
+            current = int(self.filename_parts[1])
+            new_number = f"{current + 1:07d}"  # 保持7位数字格式
+            self.filename_parts[1] = new_number
+            
+            # 更新UI显示
+            if hasattr(self, 'number_var'):
+                self.number_var.set(new_number)
+                self.update_filename_display()
+            
+            # 保存到配置文件
+            self.save_config()
+            
+            self.log(f"文件名编号已自动递增: {new_number}")
+            
+        except ValueError:
+            self.log("错误: 文件名编号格式无效，无法自动递增")
+        
     def setup_ui(self):
         """设置用户界面"""
         # 主框架
@@ -42,28 +137,57 @@ class AndroidControlApp:
         # 配置网格权重
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
-        main_frame.columnconfigure(0, weight=1)
+        main_frame.columnconfigure(0, weight=3)  # 左侧日志区域
+        main_frame.columnconfigure(1, weight=2)  # 右侧预览区域
         main_frame.rowconfigure(1, weight=1)
         
         # 标题
         title_label = ttk.Label(main_frame, text="Android 设备控制与录制", 
                                font=("Arial", 16, "bold"))
-        title_label.grid(row=0, column=0, pady=(0, 10))
+        title_label.grid(row=0, column=0, columnspan=2, pady=(0, 10))
+        
+        # 左侧布局
+        left_frame = ttk.Frame(main_frame)
+        left_frame.grid(row=1, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), padx=(0, 10))
+        left_frame.columnconfigure(0, weight=1)
+        left_frame.rowconfigure(0, weight=1)
         
         # 日志显示区域
-        log_frame = ttk.LabelFrame(main_frame, text="日志输出", padding="5")
-        log_frame.grid(row=1, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), pady=(0, 10))
+        log_frame = ttk.LabelFrame(left_frame, text="日志输出", padding="5")
+        log_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), pady=(0, 10))
         log_frame.columnconfigure(0, weight=1)
         log_frame.rowconfigure(0, weight=1)
         
-        self.log_text = scrolledtext.ScrolledText(log_frame, height=20, width=80)
+        self.log_text = scrolledtext.ScrolledText(log_frame, height=20, width=60)
         self.log_text.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        
+        # 右侧预览区域
+        right_frame = ttk.Frame(main_frame)
+        right_frame.grid(row=1, column=1, sticky=(tk.W, tk.E, tk.N, tk.S))
+        right_frame.columnconfigure(0, weight=1)
+        right_frame.rowconfigure(1, weight=1)
+        
+        # 文件名配置区域
+        filename_frame = ttk.LabelFrame(right_frame, text="视频文件名配置", padding="5")
+        filename_frame.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=(0, 10))
+        
+        self.setup_filename_ui(filename_frame)
+        
+        # 预览区域
+        preview_frame = ttk.LabelFrame(right_frame, text="摄像头预览", padding="5")
+        preview_frame.grid(row=1, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        preview_frame.columnconfigure(0, weight=1)
+        preview_frame.rowconfigure(0, weight=1)
+        
+        self.preview_label = ttk.Label(preview_frame, text="点击'测试预览'开启摄像头预览", 
+                                      anchor=tk.CENTER, font=("Arial", 12))
+        self.preview_label.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         
         # 控制按钮区域
         button_frame = ttk.Frame(main_frame)
-        button_frame.grid(row=2, column=0, sticky=(tk.W, tk.E), pady=(0, 10))
+        button_frame.grid(row=2, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(0, 10))
         
-        # 按钮
+        # 第一行按钮
         self.start_button = ttk.Button(button_frame, text="开始测量并录制", 
                                       command=self.start_measure_and_record,
                                       style="Accent.TButton")
@@ -83,12 +207,197 @@ class AndroidControlApp:
         self.stop_button.grid(row=0, column=3, padx=(0, 10), pady=5, sticky=tk.W)
         self.stop_button.config(state=tk.DISABLED)  # 初始状态禁用
         
+        # 第二行按钮
+        self.preview_button = ttk.Button(button_frame, text="测试预览", 
+                                        command=self.toggle_preview)
+        self.preview_button.grid(row=1, column=0, padx=(0, 10), pady=5, sticky=tk.W)
+        
         # 状态栏
         self.status_var = tk.StringVar()
         self.status_var.set("就绪")
         status_label = ttk.Label(main_frame, textvariable=self.status_var, 
                                 relief=tk.SUNKEN, anchor=tk.W)
-        status_label.grid(row=3, column=0, sticky=(tk.W, tk.E))
+        status_label.grid(row=3, column=0, columnspan=2, sticky=(tk.W, tk.E))
+        
+    def setup_filename_ui(self, parent):
+        """设置文件名编辑界面"""
+        # 显示当前文件名
+        current_name = "-".join(self.filename_parts)
+        
+        # 第一部分：前缀
+        ttk.Label(parent, text="前缀:").grid(row=0, column=0, sticky=tk.W, padx=(0, 5))
+        self.prefix_var = tk.StringVar(value=self.filename_parts[0])
+        self.prefix_entry = ttk.Entry(parent, textvariable=self.prefix_var, width=30)
+        self.prefix_entry.grid(row=0, column=1, columnspan=3, sticky=(tk.W, tk.E), padx=(0, 5))
+        self.prefix_entry.bind('<KeyRelease>', self.update_filename_display)
+        
+        # 第二部分：数字（带加减按钮）
+        ttk.Label(parent, text="编号:").grid(row=1, column=0, sticky=tk.W, padx=(0, 5))
+        
+        self.decrease_button = ttk.Button(parent, text="-", width=3, 
+                                         command=self.decrease_number)
+        self.decrease_button.grid(row=1, column=1, padx=(0, 2))
+        
+        self.number_var = tk.StringVar(value=self.filename_parts[1])
+        self.number_entry = ttk.Entry(parent, textvariable=self.number_var, width=15, justify=tk.CENTER)
+        self.number_entry.grid(row=1, column=2, padx=2)
+        self.number_entry.bind('<KeyRelease>', self.update_filename_display)
+        
+        self.increase_button = ttk.Button(parent, text="+", width=3, 
+                                         command=self.increase_number)
+        self.increase_button.grid(row=1, column=3, padx=(2, 0))
+        
+        # 第三部分：后缀
+        ttk.Label(parent, text="后缀:").grid(row=2, column=0, sticky=tk.W, padx=(0, 5))
+        self.suffix_var = tk.StringVar(value=self.filename_parts[2])
+        self.suffix_entry = ttk.Entry(parent, textvariable=self.suffix_var, width=10)
+        self.suffix_entry.grid(row=2, column=1, columnspan=3, sticky=(tk.W, tk.E), padx=(0, 5))
+        self.suffix_entry.bind('<KeyRelease>', self.update_filename_display)
+        
+        # 显示完整文件名
+        ttk.Label(parent, text="完整文件名:").grid(row=3, column=0, sticky=tk.W, padx=(0, 5), pady=(10, 0))
+        self.filename_display_var = tk.StringVar(value=current_name)
+        filename_display_label = ttk.Label(parent, textvariable=self.filename_display_var, 
+                                         font=("Arial", 10, "bold"), 
+                                         foreground="blue")
+        filename_display_label.grid(row=3, column=1, columnspan=3, sticky=(tk.W, tk.E), 
+                                  padx=(0, 5), pady=(10, 0))
+        
+        # 配置列权重
+        parent.columnconfigure(1, weight=1)
+        
+    def update_filename_display(self, event=None):
+        """更新文件名显示"""
+        self.filename_parts[0] = self.prefix_var.get()
+        self.filename_parts[1] = self.number_var.get()
+        self.filename_parts[2] = self.suffix_var.get()
+        
+        full_name = "-".join(self.filename_parts)
+        self.filename_display_var.set(full_name)
+        
+        # 自动保存配置（延迟保存，避免频繁写入）
+        if hasattr(self, '_save_timer'):
+            self.root.after_cancel(self._save_timer)
+        self._save_timer = self.root.after(1000, self.save_config)  # 1秒后保存
+        
+    def increase_number(self):
+        """增加编号"""
+        try:
+            current = int(self.number_var.get())
+            new_number = f"{current + 1:07d}"  # 保持7位数字格式
+            self.number_var.set(new_number)
+            self.update_filename_display()
+        except ValueError:
+            messagebox.showerror("错误", "编号必须是数字")
+            
+    def decrease_number(self):
+        """减少编号"""
+        try:
+            current = int(self.number_var.get())
+            if current > 0:
+                new_number = f"{current - 1:07d}"  # 保持7位数字格式
+                self.number_var.set(new_number)
+                self.update_filename_display()
+            else:
+                messagebox.showwarning("警告", "编号不能小于0")
+        except ValueError:
+            messagebox.showerror("错误", "编号必须是数字")
+            
+    def toggle_preview(self):
+        """切换预览状态"""
+        if not self.preview_active:
+            self.start_preview()
+        else:
+            self.stop_preview()
+            
+    def start_preview(self):
+        """启动预览"""
+        try:
+            # 检查是否有虚拟环境
+            venv_python = "venv/bin/python"
+            if os.path.exists(venv_python):
+                python_path = "venv/lib/python*/site-packages"
+            else:
+                python_path = None
+                
+            # 初始化摄像头
+            self.preview_cap = cv2.VideoCapture(0)
+            if not self.preview_cap.isOpened():
+                self.log("错误: 无法打开摄像头进行预览")
+                return
+                
+            # 设置与录制相同的参数
+            self.preview_cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+            self.preview_cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 400)
+            self.preview_cap.set(cv2.CAP_PROP_FPS, 240)
+            self.preview_cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 0.75)
+            self.preview_cap.set(cv2.CAP_PROP_EXPOSURE, -8)
+            
+            actual_width = self.preview_cap.get(cv2.CAP_PROP_FRAME_WIDTH)
+            actual_height = self.preview_cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
+            actual_fps = self.preview_cap.get(cv2.CAP_PROP_FPS)
+            
+            self.log(f"预览摄像头已启动: {int(actual_width)}x{int(actual_height)}, {actual_fps:.1f} FPS")
+            
+            self.preview_active = True
+            self.preview_button.config(text="停止预览")
+            
+            # 启动预览线程
+            self.preview_thread = threading.Thread(target=self.preview_loop, daemon=True)
+            self.preview_thread.start()
+            
+        except Exception as e:
+            self.log(f"启动预览失败: {str(e)}")
+            
+    def stop_preview(self):
+        """停止预览"""
+        self.preview_active = False
+        self.preview_button.config(text="测试预览")
+        
+        if self.preview_cap:
+            self.preview_cap.release()
+            self.preview_cap = None
+            
+        # 清空预览区域
+        self.preview_label.config(image="", text="点击'测试预览'开启摄像头预览")
+        self.log("预览已停止")
+        
+    def preview_loop(self):
+        """预览循环"""
+        while self.preview_active and self.preview_cap:
+            try:
+                ret, frame = self.preview_cap.read()
+                if ret:
+                    # 转换颜色空间
+                    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    
+                    # 调整显示尺寸（保持纵横比）
+                    height, width = frame_rgb.shape[:2]
+                    max_width, max_height = 400, 300
+                    
+                    # 计算缩放比例
+                    scale = min(max_width/width, max_height/height)
+                    new_width = int(width * scale)
+                    new_height = int(height * scale)
+                    
+                    # 缩放图像
+                    frame_resized = cv2.resize(frame_rgb, (new_width, new_height))
+                    
+                    # 转换为PIL图像
+                    image = Image.fromarray(frame_resized)
+                    photo = ImageTk.PhotoImage(image)
+                    
+                    # 更新显示
+                    if self.preview_active:
+                        self.preview_label.config(image=photo, text="")
+                        self.preview_label.image = photo  # 保持引用
+                        
+                time.sleep(1/30)  # 30 FPS 显示频率
+                
+            except Exception as e:
+                if self.preview_active:
+                    self.log(f"预览更新错误: {str(e)}")
+                break
         
     def log(self, message):
         """添加日志消息到队列"""
@@ -317,9 +626,10 @@ sudo pacman -S android-tools
     def start_output_reader(self):
         """启动读取子进程输出的线程"""
         def read_output():
-            if self.record_process and self.record_process.stdout:
+            process = self.record_process  # 保存进程引用，避免被外部修改影响
+            if process and process.stdout:
                 try:
-                    for line in iter(self.record_process.stdout.readline, ''):
+                    for line in iter(process.stdout.readline, ''):
                         if line:
                             # 移除换行符并添加前缀
                             clean_line = line.rstrip('\n\r')
@@ -329,14 +639,54 @@ sudo pacman -S android-tools
                                 # 检查是否是摄像头就绪的信号
                                 if "等待从标准输入接收's'命令" in clean_line:
                                     self.camera_ready = True
+                                    
+                                # 检查是否是文件保存完成的信号
+                                if "正在保存文件到:" in clean_line:
+                                    # 提取文件路径
+                                    file_path = clean_line.split("正在保存文件到:")[-1].strip()
+                                    self.last_recorded_video = file_path
+                                    
+                                # 检查是否是文件保存成功的信号
+                                if "文件保存成功。" in clean_line and self.last_recorded_video:
+                                    # 录制完成，复制文件
+                                    self.copy_recorded_video()
                         
-                        # 检查进程是否已结束
-                        if self.record_process.poll() is not None:
+                        # 检查进程是否已结束（使用本地进程引用）
+                        if process and process.poll() is not None:
                             break
                 except Exception as e:
                     self.log(f"读取子进程输出时发生错误: {str(e)}")
                     
         threading.Thread(target=read_output, daemon=True).start()
+        
+    def copy_recorded_video(self):
+        """复制录制的视频到payloads目录"""
+        if not self.last_recorded_video or not os.path.exists(self.last_recorded_video):
+            self.log("错误: 找不到录制的视频文件")
+            return
+            
+        try:
+            # 创建目标目录
+            target_dir = "payloads/MagicMirror"
+            if not os.path.exists(target_dir):
+                os.makedirs(target_dir)
+                self.log(f"创建目录: {target_dir}")
+            
+            # 构建新文件名
+            custom_filename = "-".join(self.filename_parts) + ".mp4"
+            target_path = os.path.join(target_dir, custom_filename)
+            
+            # 复制文件
+            shutil.copy2(self.last_recorded_video, target_path)
+            self.log(f"✓ 视频已复制到: {target_path}")
+            
+            # 显示文件信息
+            source_size = os.path.getsize(self.last_recorded_video)
+            target_size = os.path.getsize(target_path)
+            self.log(f"文件大小: {source_size:,} 字节 -> {target_size:,} 字节")
+            
+        except Exception as e:
+            self.log(f"✗ 复制视频文件失败: {str(e)}")
             
     def start_measure_and_record(self):
         """开始测量并录制（摄像头已预先启动）"""
@@ -488,6 +838,9 @@ sudo pacman -S android-tools
                                 self.log(f"  - {file}")
                         else:
                             self.log("下载目录为空")
+                    
+                    # 下载成功后自动增加视频文件名编号
+                    self.increment_filename_number()
                             
                     self.status_var.set("Payload 获取完成")
                 else:
@@ -510,12 +863,20 @@ def main():
     
     def on_closing():
         """程序关闭时的清理工作"""
+        # 保存最新配置
+        app.save_config()
+        
         if hasattr(app, 'record_process') and app.record_process:
             try:
                 app.record_process.terminate()
                 app.log("程序退出，已清理录制进程")
             except:
                 pass
+        
+        # 停止预览
+        if hasattr(app, 'preview_active') and app.preview_active:
+            app.stop_preview()
+            
         root.destroy()
     
     root.protocol("WM_DELETE_WINDOW", on_closing)
