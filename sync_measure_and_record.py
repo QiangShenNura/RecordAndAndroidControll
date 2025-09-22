@@ -42,6 +42,10 @@ class AndroidControlApp:
         self.adb_path = None
         self.adb_ready = False
         
+        # 摄像头选择
+        self.available_cameras = []
+        self.selected_camera_index = 0
+        
         # 配置文件路径
         self.config_file = self.get_config_path()
         
@@ -53,6 +57,10 @@ class AndroidControlApp:
         
         # 设置UI
         self.setup_ui()
+        
+        # 检测摄像头并更新列表
+        self.detect_cameras()
+        self.update_camera_list()
         
         # 检查依赖
         self.check_dependencies()
@@ -96,9 +104,13 @@ class AndroidControlApp:
                     
                 # 加载设备IP配置
                 self.saved_device_ip = config.get('device_ip', '192.168.1.100')
+                
+                # 加载摄像头索引配置
+                self.saved_camera_index = config.get('camera_index', 0)
             else:
                 self.log("配置文件不存在，使用默认设置")
                 self.saved_device_ip = '192.168.1.100'
+                self.saved_camera_index = 0
                 # 保存默认配置
                 self.save_config()
                 
@@ -115,9 +127,15 @@ class AndroidControlApp:
                 if current_ip:
                     device_ip = current_ip
             
+            # 保存当前选择的摄像头索引
+            camera_index = self.saved_camera_index
+            if hasattr(self, 'camera_var') and self.available_cameras:
+                camera_index = self.get_selected_camera_index()
+            
             config = {
                 'filename_parts': self.filename_parts,
                 'device_ip': device_ip,
+                'camera_index': camera_index,
                 'last_updated': datetime.now().isoformat()
             }
             
@@ -275,6 +293,53 @@ class AndroidControlApp:
                 
         threading.Thread(target=reconfigure_thread, daemon=True).start()
         
+    def detect_cameras(self):
+        """检测可用的摄像头设备"""
+        self.available_cameras = []
+        self.log("正在检测可用摄像头...")
+        
+        for i in range(10):  # 检查0-9号摄像头
+            try:
+                cap = cv2.VideoCapture(i)
+                if cap.isOpened():
+                    # 尝试读取一帧来确认摄像头真正可用
+                    ret, frame = cap.read()
+                    if ret:
+                        width = cap.get(cv2.CAP_PROP_FRAME_WIDTH)
+                        height = cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
+                        fps = cap.get(cv2.CAP_PROP_FPS)
+                        
+                        camera_info = {
+                            'index': i,
+                            'name': f"摄像头 {i}",
+                            'resolution': f"{int(width)}x{int(height)}",
+                            'fps': f"{fps:.1f}"
+                        }
+                        self.available_cameras.append(camera_info)
+                        self.log(f"找到摄像头 {i}: {int(width)}x{int(height)} @ {fps:.1f}fps")
+                cap.release()
+            except:
+                continue
+                
+        if not self.available_cameras:
+            self.log("⚠ 未找到可用摄像头")
+            messagebox.showwarning("摄像头警告", "未找到可用摄像头！\n请确保摄像头已正确连接。")
+        else:
+            self.log(f"✓ 共找到 {len(self.available_cameras)} 个可用摄像头")
+            # 从配置中加载上次选择的摄像头
+            if hasattr(self, 'saved_camera_index'):
+                if 0 <= self.saved_camera_index < len(self.available_cameras):
+                    self.selected_camera_index = self.saved_camera_index
+        
+    def get_selected_camera_index(self):
+        """获取当前选择的摄像头索引"""
+        if hasattr(self, 'camera_var') and self.available_cameras:
+            selected_camera = self.camera_var.get()
+            for camera in self.available_cameras:
+                if selected_camera.startswith(f"摄像头 {camera['index']}"):
+                    return camera['index']
+        return 0
+        
     def setup_ui(self):
         """设置用户界面"""
         # 主框架
@@ -354,34 +419,47 @@ class AndroidControlApp:
                                         command=self.toggle_preview)
         self.preview_button.grid(row=0, column=3, padx=(0, 10), pady=5, sticky=tk.W)
         
-        # 第二行：设备连接区域
-        ttk.Label(button_frame, text="设备IP:").grid(row=1, column=0, sticky=tk.W, pady=(10, 5))
+        # 第二行：摄像头和设备连接区域
+        ttk.Label(button_frame, text="摄像头:").grid(row=1, column=0, sticky=tk.W, pady=(10, 5))
+        
+        self.camera_var = tk.StringVar()
+        self.camera_combo = ttk.Combobox(button_frame, textvariable=self.camera_var, 
+                                        width=20, state="readonly", font=("Arial", 9))
+        self.camera_combo.grid(row=1, column=1, padx=(0, 10), pady=(10, 5), sticky=tk.W)
+        self.camera_combo.bind('<<ComboboxSelected>>', self.on_camera_change)
+        
+        ttk.Label(button_frame, text="设备IP:").grid(row=1, column=2, sticky=tk.W, pady=(10, 5))
         
         self.device_ip_var = tk.StringVar()
         self.device_ip_entry = ttk.Entry(button_frame, textvariable=self.device_ip_var, 
                                         width=15, font=("Arial", 9))
-        self.device_ip_entry.grid(row=1, column=1, padx=(0, 10), pady=(10, 5), sticky=tk.W)
+        self.device_ip_entry.grid(row=1, column=3, padx=(0, 10), pady=(10, 5), sticky=tk.W)
         # 设置保存的IP地址
         self.device_ip_var.set(self.saved_device_ip)
         # 绑定变化事件以自动保存
         self.device_ip_var.trace_add('write', self.on_ip_change)
         
+        # 第三行：连接按钮区域
         self.connect_ip_button = ttk.Button(button_frame, text="连接IP设备", 
                                            command=self.connect_device_by_ip)
-        self.connect_ip_button.grid(row=1, column=2, padx=(0, 10), pady=(10, 5), sticky=tk.W)
+        self.connect_ip_button.grid(row=2, column=0, padx=(0, 10), pady=(5, 5), sticky=tk.W)
         
         self.connect_button = ttk.Button(button_frame, text="检查设备连接", 
                                         command=self.check_device_connection)
-        self.connect_button.grid(row=1, column=3, padx=(0, 10), pady=(10, 5), sticky=tk.W)
+        self.connect_button.grid(row=2, column=1, padx=(0, 10), pady=(5, 5), sticky=tk.W)
         
-        # 第三行：设备管理
+        # 第四行：设备管理
         self.disconnect_button = ttk.Button(button_frame, text="断开设备", 
                                            command=self.disconnect_device)
-        self.disconnect_button.grid(row=2, column=0, padx=(0, 10), pady=(10, 5), sticky=tk.W)
+        self.disconnect_button.grid(row=3, column=0, padx=(0, 10), pady=(5, 10), sticky=tk.W)
         
         self.adb_config_button = ttk.Button(button_frame, text="重新配置ADB", 
                                            command=self.reconfigure_adb)
-        self.adb_config_button.grid(row=2, column=1, padx=(0, 10), pady=(10, 5), sticky=tk.W)
+        self.adb_config_button.grid(row=3, column=1, padx=(0, 10), pady=(5, 10), sticky=tk.W)
+        
+        self.refresh_camera_button = ttk.Button(button_frame, text="刷新摄像头", 
+                                               command=self.refresh_cameras)
+        self.refresh_camera_button.grid(row=3, column=2, padx=(0, 10), pady=(5, 10), sticky=tk.W)
         
         # 状态栏
         self.status_var = tk.StringVar()
@@ -458,6 +536,59 @@ class AndroidControlApp:
             self.root.after_cancel(self._ip_save_timer)
         self._ip_save_timer = self.root.after(2000, self.save_config)  # 2秒后保存
         
+    def on_camera_change(self, event=None):
+        """摄像头选择变化时的处理函数"""
+        # 自动保存摄像头配置
+        if hasattr(self, '_camera_save_timer'):
+            self.root.after_cancel(self._camera_save_timer)
+        self._camera_save_timer = self.root.after(1000, self.save_config)  # 1秒后保存
+        
+        # 更新选择的摄像头索引
+        self.selected_camera_index = self.get_selected_camera_index()
+        self.log(f"已选择摄像头 {self.selected_camera_index}")
+        
+    def update_camera_list(self):
+        """更新摄像头下拉列表"""
+        if not hasattr(self, 'camera_combo'):
+            return
+            
+        camera_options = []
+        for camera in self.available_cameras:
+            option = f"摄像头 {camera['index']} - {camera['resolution']} @ {camera['fps']}fps"
+            camera_options.append(option)
+        
+        self.camera_combo['values'] = camera_options
+        
+        # 设置默认选择
+        if camera_options:
+            # 尝试选择之前保存的摄像头
+            selected_option = None
+            for option in camera_options:
+                if option.startswith(f"摄像头 {self.selected_camera_index}"):
+                    selected_option = option
+                    break
+            
+            if selected_option:
+                self.camera_var.set(selected_option)
+            else:
+                # 如果之前选择的摄像头不存在，选择第一个
+                self.camera_var.set(camera_options[0])
+                self.selected_camera_index = self.available_cameras[0]['index']
+                
+    def refresh_cameras(self):
+        """刷新摄像头列表"""
+        self.log("刷新摄像头列表...")
+        
+        # 停止当前预览（如果正在进行）
+        if self.preview_active:
+            self.stop_preview()
+        
+        # 重新检测摄像头
+        self.detect_cameras()
+        self.update_camera_list()
+        
+        self.log("摄像头列表已刷新")
+        
     def increase_number(self):
         """增加编号"""
         try:
@@ -497,11 +628,15 @@ class AndroidControlApp:
                 python_path = "venv/lib/python*/site-packages"
             else:
                 python_path = None
+            
+            # 获取当前选择的摄像头索引
+            camera_index = self.get_selected_camera_index()
+            self.log(f"使用摄像头 {camera_index} 进行预览")
                 
             # 初始化摄像头
-            self.preview_cap = cv2.VideoCapture(0)
+            self.preview_cap = cv2.VideoCapture(camera_index)
             if not self.preview_cap.isOpened():
-                self.log("错误: 无法打开摄像头进行预览")
+                self.log(f"错误: 无法打开摄像头 {camera_index} 进行预览")
                 return
                 
             # 设置与录制相同的参数
@@ -865,9 +1000,13 @@ class AndroidControlApp:
                 python_executable = sys.executable
                 self.log("使用系统 Python")
             
-            # 使用合适的Python解释器启动子进程，捕获输出
+            # 获取当前选择的摄像头索引
+            camera_index = self.get_selected_camera_index()
+            self.log(f"使用摄像头索引: {camera_index}")
+            
+            # 使用合适的Python解释器启动子进程，传递摄像头索引，捕获输出
             self.record_process = subprocess.Popen(
-                [python_executable, record_script_path],
+                [python_executable, record_script_path, str(camera_index)],
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,  # 将stderr重定向到stdout

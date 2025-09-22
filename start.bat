@@ -1,43 +1,43 @@
 @echo off
-title 240fps录制程序
+title 240fps Recording Program
 cls
 
 echo =====================================
-echo      240fps 录制程序启动器
+echo    240fps Recording Program Launcher
 echo =====================================
 echo.
 
-REM 检查虚拟环境是否存在
+REM Check if virtual environment exists
 if not exist "venv\Scripts\activate.bat" (
-    echo [错误] 虚拟环境不存在！
-    echo 请确保在项目根目录下存在 venv 文件夹
+    echo [ERROR] Virtual environment not found!
+    echo Please make sure venv folder exists in project directory
     echo.
     pause
     exit /b 1
 )
 
-REM 激活虚拟环境
-echo [信息] 激活虚拟环境...
+REM Activate virtual environment
+echo [INFO] Activating virtual environment...
 call venv\Scripts\activate.bat
 
-REM 检查必要的依赖是否已安装
-echo [信息] 检查依赖包...
+REM Check if required packages are installed
+echo [INFO] Checking dependencies...
 py -c "import cv2, PIL" >nul 2>&1
 if errorlevel 1 (
-    echo [警告] 依赖包缺失，正在安装...
+    echo [WARNING] Missing dependencies, installing...
     py -m pip install opencv-python Pillow
-    echo [信息] 依赖包安装完成
+    echo [INFO] Dependencies installed successfully
 )
 
-echo [信息] 启动主程序...
+echo [INFO] Starting main program...
 echo =====================================
 echo.
 
-REM 运行主程序
+REM Run main program
 py sync_measure_and_record.py
 
 echo.
 echo =====================================
-echo [信息] 程序已退出
-echo 按任意键关闭窗口...
+echo [INFO] Program exited
+echo Press any key to close window...
 pause >nul

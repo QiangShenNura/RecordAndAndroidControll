@@ -59,13 +59,22 @@ def record_video(cap, actual_fps, actual_width, actual_height):
 
 # --- 主函数 ---
 def main():
+    # 检查命令行参数
+    camera_index = 0
+    if len(sys.argv) > 1:
+        try:
+            camera_index = int(sys.argv[1])
+            print(f"使用指定的摄像头 {camera_index}", flush=True)
+        except ValueError:
+            print("警告: 摄像头索引参数无效，使用默认摄像头 0", flush=True)
+    
     if not os.path.exists(OUTPUT_DIR):
         os.makedirs(OUTPUT_DIR)
 
-    cap = cv2.VideoCapture(0)
+    cap = cv2.VideoCapture(camera_index)
 
     if not cap.isOpened():
-        print("错误：无法打开摄像头。", flush=True)
+        print(f"错误：无法打开摄像头 {camera_index}。", flush=True)
         return
 
     # 设置分辨率、帧率
