@@ -13,6 +13,8 @@ from datetime import datetime
 import cv2
 from PIL import Image, ImageTk
 import json
+import zipfile
+import stat
 
 class AndroidControlApp:
     def __init__(self, root):
@@ -33,14 +35,21 @@ class AndroidControlApp:
         self.preview_thread = None
         
         # 文件名组件（先设置默认值，后面会从配置文件读取）
-        self.filename_parts = ["AnuraMM-5-MMA0V7230924002", "0000027", "1"]
+        self.filename_parts = ["AnuraMMA-5-MMA0V7230924002", "0000027", "1"]
         self.last_recorded_video = None  # 最后录制的视频文件路径
+        
+        # ADB工具路径
+        self.adb_path = None
+        self.adb_ready = False
         
         # 配置文件路径
         self.config_file = self.get_config_path()
         
         # 从配置文件加载设置
         self.load_config()
+        
+        # 自动配置ADB工具
+        self.setup_adb_tools()
         
         # 设置UI
         self.setup_ui()
@@ -127,6 +136,132 @@ class AndroidControlApp:
             
         except ValueError:
             self.log("错误: 文件名编号格式无效，无法自动递增")
+            
+    def setup_adb_tools(self):
+        """自动配置ADB工具"""
+        self.log("正在配置ADB工具...")
+        
+        try:
+            # 获取当前系统类型
+            system = platform.system()
+            
+            # 确定要使用的压缩包和ADB可执行文件名
+            if system == "Darwin":  # macOS
+                zip_file = "platform-tools-latest-darwin.zip"
+                adb_executable = "adb"
+                self.log("检测到macOS系统，使用Darwin平台工具")
+            elif system == "Windows":
+                zip_file = "platform-tools-latest-windows.zip"
+                adb_executable = "adb.exe"
+                self.log("检测到Windows系统，使用Windows平台工具")
+            else:
+                self.log(f"不支持的系统类型: {system}")
+                return False
+            
+            # 检查压缩包是否存在
+            if not os.path.exists(zip_file):
+                self.log(f"错误: 找不到ADB工具包 {zip_file}")
+                return False
+            
+            # 创建platform-tools目录
+            tools_dir = "platform-tools"
+            if os.path.exists(tools_dir):
+                self.log("platform-tools目录已存在，检查是否需要更新...")
+                # 检查ADB是否已经存在且可用
+                potential_adb_path = os.path.join(tools_dir, adb_executable)
+                if os.path.exists(potential_adb_path) and self.test_adb_executable(potential_adb_path):
+                    self.adb_path = os.path.abspath(potential_adb_path)
+                    self.adb_ready = True
+                    self.log(f"✓ ADB工具已就绪: {self.adb_path}")
+                    return True
+                else:
+                    self.log("现有ADB工具不可用，重新解压...")
+                    shutil.rmtree(tools_dir)
+            
+            # 解压ADB工具包
+            self.log(f"正在解压 {zip_file}...")
+            with zipfile.ZipFile(zip_file, 'r') as zip_ref:
+                zip_ref.extractall('.')
+                self.log("✓ ADB工具包解压完成")
+            
+            # 设置ADB可执行文件路径
+            self.adb_path = os.path.abspath(os.path.join(tools_dir, adb_executable))
+            
+            # 在macOS/Linux上设置执行权限
+            if system in ["Darwin", "Linux"]:
+                self.log("设置ADB可执行权限...")
+                os.chmod(self.adb_path, stat.S_IRWXU | stat.S_IRGRP | stat.S_IXGRP | stat.S_IROTH | stat.S_IXOTH)
+                self.log("✓ 可执行权限设置完成")
+            
+            # 测试ADB是否可用
+            if self.test_adb_executable(self.adb_path):
+                self.adb_ready = True
+                self.log(f"✓ ADB工具配置成功: {self.adb_path}")
+                return True
+            else:
+                self.log("✗ ADB工具测试失败")
+                return False
+                
+        except Exception as e:
+            self.log(f"配置ADB工具时发生错误: {str(e)}")
+            return False
+            
+    def test_adb_executable(self, adb_path):
+        """测试ADB可执行文件是否正常工作"""
+        try:
+            result = subprocess.run([adb_path, 'version'], 
+                                  capture_output=True, text=True, timeout=10)
+            if result.returncode == 0:
+                version_info = result.stdout.strip().split('\n')[0]
+                self.log(f"ADB版本: {version_info}")
+                return True
+            else:
+                self.log(f"ADB测试失败: {result.stderr}")
+                return False
+        except Exception as e:
+            self.log(f"ADB测试过程中发生错误: {str(e)}")
+            return False
+            
+    def get_adb_command(self, *args):
+        """构建ADB命令，使用内置的ADB工具"""
+        if not self.adb_ready or not self.adb_path:
+            raise RuntimeError("ADB工具未就绪")
+        return [self.adb_path] + list(args)
+        
+    def reconfigure_adb(self):
+        """重新配置ADB工具"""
+        self.log("开始重新配置ADB工具...")
+        
+        def reconfigure_thread():
+            try:
+                # 停止当前ADB服务器
+                if self.adb_ready and self.adb_path:
+                    try:
+                        kill_cmd = self.get_adb_command('kill-server')
+                        subprocess.run(kill_cmd, capture_output=True, timeout=5)
+                        self.log("已停止现有ADB服务器")
+                    except:
+                        pass
+                
+                # 删除现有platform-tools目录
+                tools_dir = "platform-tools"
+                if os.path.exists(tools_dir):
+                    self.log("删除现有ADB工具...")
+                    shutil.rmtree(tools_dir)
+                
+                # 重新配置ADB
+                self.adb_ready = False
+                self.adb_path = None
+                
+                if self.setup_adb_tools():
+                    self.log("✓ ADB工具重新配置完成")
+                else:
+                    self.log("✗ ADB工具重新配置失败")
+                    
+            except Exception as e:
+                self.log(f"重新配置ADB时发生错误: {str(e)}")
+                
+        threading.Thread(target=reconfigure_thread, daemon=True).start()
         
     def setup_ui(self):
         """设置用户界面"""
@@ -211,6 +346,10 @@ class AndroidControlApp:
         self.preview_button = ttk.Button(button_frame, text="测试预览", 
                                         command=self.toggle_preview)
         self.preview_button.grid(row=1, column=0, padx=(0, 10), pady=5, sticky=tk.W)
+        
+        self.adb_config_button = ttk.Button(button_frame, text="重新配置ADB", 
+                                           command=self.reconfigure_adb)
+        self.adb_config_button.grid(row=1, column=1, padx=(0, 10), pady=5, sticky=tk.W)
         
         # 状态栏
         self.status_var = tk.StringVar()
@@ -423,12 +562,12 @@ class AndroidControlApp:
         """检查必要的工具是否已安装"""
         self.log("正在检查依赖工具...")
         
-        # 检查 ADB
+        # 检查内置 ADB
         if self.check_adb():
-            self.log("✓ ADB 已安装")
+            self.log("✓ 内置ADB工具已就绪")
         else:
-            self.log("✗ ADB 未安装")
-            self.show_adb_install_instructions()
+            self.log("✗ 内置ADB工具未就绪")
+            self.log("请检查ADB工具包是否正确解压")
             
         # 检查录制脚本
         if os.path.exists("record_script.py"):
@@ -437,87 +576,24 @@ class AndroidControlApp:
             self.log("✗ 录制脚本 (record_script.py) 未找到")
             
     def check_adb(self):
-        """检查 ADB 是否已安装"""
-        try:
-            result = subprocess.run(['adb', 'version'], 
-                                  capture_output=True, text=True, timeout=10)
-            return result.returncode == 0
-        except (subprocess.TimeoutExpired, FileNotFoundError):
-            return False
+        """检查ADB是否已安装（使用内置ADB工具）"""
+        return self.adb_ready
             
-    def show_adb_install_instructions(self):
-        """显示 ADB 安装说明"""
-        system = platform.system()
-        
-        if system == "Darwin":  # macOS
-            instructions = """
-ADB 安装说明 (macOS):
-
-方法1 - 使用 Homebrew (推荐):
-brew install android-platform-tools
-
-方法2 - 手动安装:
-1. 访问 https://developer.android.com/studio/releases/platform-tools
-2. 下载 SDK Platform-Tools for Mac
-3. 解压并将路径添加到 PATH 环境变量
-
-安装完成后请重启程序。
-"""
-        elif system == "Windows":
-            instructions = """
-ADB 安装说明 (Windows):
-
-方法1 - 使用 Chocolatey:
-choco install adb
-
-方法2 - 使用 Scoop:
-scoop install adb
-
-方法3 - 手动安装:
-1. 访问 https://developer.android.com/studio/releases/platform-tools
-2. 下载 SDK Platform-Tools for Windows
-3. 解压并将路径添加到系统 PATH 环境变量
-
-安装完成后请重启程序。
-"""
-        else:  # Linux
-            instructions = """
-ADB 安装说明 (Linux):
-
-Ubuntu/Debian:
-sudo apt update
-sudo apt install android-tools-adb
-
-CentOS/RHEL/Fedora:
-sudo yum install android-tools
-# 或
-sudo dnf install android-tools
-
-Arch Linux:
-sudo pacman -S android-tools
-
-安装完成后请重启程序。
-"""
-        
-        # 创建安装说明窗口
-        install_window = tk.Toplevel(self.root)
-        install_window.title("ADB 安装说明")
-        install_window.geometry("600x400")
-        
-        text_widget = scrolledtext.ScrolledText(install_window, wrap=tk.WORD)
-        text_widget.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-        text_widget.insert(tk.END, instructions)
-        text_widget.config(state=tk.DISABLED)
-        
     def connect_device(self):
         """连接 Android 设备"""
+        if not self.adb_ready:
+            self.log("错误: ADB工具未就绪")
+            self.status_var.set("ADB工具未就绪")
+            return
+            
         self.log("正在搜索 Android 设备...")
         self.status_var.set("连接设备中...")
         
         def connect_thread():
             try:
                 # 检查设备连接
-                result = subprocess.run(['adb', 'devices'], 
+                adb_cmd = self.get_adb_command('devices')
+                result = subprocess.run(adb_cmd, 
                                       capture_output=True, text=True, timeout=10)
                 
                 if result.returncode == 0:
@@ -704,7 +780,8 @@ sudo pacman -S android-tools
             try:
                 # 1. 向 Android 设备发送 's' 键
                 self.log("向 Android 设备发送 's' 键...")
-                adb_result = subprocess.run(['adb', 'shell', 'input', 'text', 's'], 
+                adb_cmd = self.get_adb_command('shell', 'input', 'text', 's')
+                adb_result = subprocess.run(adb_cmd, 
                                           capture_output=True, text=True, timeout=10)
                 
                 # 2. 同时向录制子进程发送 's' 命令
@@ -792,6 +869,11 @@ sudo pacman -S android-tools
         
     def get_payload(self):
         """获取 Payload 文件"""
+        if not self.adb_ready:
+            self.log("错误: ADB工具未就绪")
+            self.status_var.set("ADB工具未就绪")
+            return
+            
         self.log("开始获取 Payload 文件...")
         self.status_var.set("获取 Payload 中...")
         
@@ -804,9 +886,8 @@ sudo pacman -S android-tools
                     
                 # 列出设备上的文件
                 self.log("检查设备上的 Payload 文件...")
-                ls_result = subprocess.run([
-                    'adb', 'shell', 'ls', '-la', '/sdcard/Download/MagicMirror/'
-                ], capture_output=True, text=True, timeout=15)
+                ls_cmd = self.get_adb_command('shell', 'ls', '-la', '/sdcard/Download/MagicMirror/')
+                ls_result = subprocess.run(ls_cmd, capture_output=True, text=True, timeout=15)
                 
                 if ls_result.returncode != 0:
                     self.log("无法访问设备上的 MagicMirror 目录")
@@ -821,9 +902,8 @@ sudo pacman -S android-tools
                 # 这里假设我们需要获取所有 payload 文件
                 self.log("开始下载 Payload 文件...")
                 
-                pull_result = subprocess.run([
-                    'adb', 'pull', '/sdcard/Download/MagicMirror/', local_dir
-                ], capture_output=True, text=True, timeout=30)
+                pull_cmd = self.get_adb_command('pull', '/sdcard/Download/MagicMirror/', local_dir)
+                pull_result = subprocess.run(pull_cmd, capture_output=True, text=True, timeout=30)
                 
                 if pull_result.returncode == 0:
                     self.log("✓ Payload 文件下载成功")
