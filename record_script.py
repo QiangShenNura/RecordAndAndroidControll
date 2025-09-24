@@ -75,7 +75,7 @@ def main():
     cap = cv2.VideoCapture(camera_index)
 
     if not cap.isOpened():
-        print(f"错误：无法打开摄像头 {camera_index}。", flush=True)
+        print(f"错误: 无法打开摄像头 {camera_index}。", flush=True)
         return
 
     # 设置分辨率、帧率
