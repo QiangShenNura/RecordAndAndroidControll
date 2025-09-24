@@ -485,75 +485,87 @@ class AndroidControlApp:
                                       anchor=tk.CENTER, font=("Arial", 12))
         self.preview_label.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         
-        # 控制按钮区域
-        button_frame = ttk.Frame(main_frame)
-        button_frame.grid(row=2, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(0, 10))
+        # 控制面板区域
+        control_frame = ttk.Frame(main_frame)
+        control_frame.grid(row=2, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(10, 0))
+        control_frame.columnconfigure(0, weight=1)
         
-        # 第一行按钮：主要操作
-        self.start_button = ttk.Button(button_frame, text="开始测量并录制", 
+        # 主要操作区域
+        main_action_frame = ttk.LabelFrame(control_frame, text="主要操作", padding="5")
+        main_action_frame.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=(0, 10))
+        
+        self.start_button = ttk.Button(main_action_frame, text="开始测量并录制", 
                                       command=self.start_measure_and_record,
                                       style="Accent.TButton")
-        self.start_button.grid(row=0, column=0, padx=(0, 10), pady=5, sticky=tk.W)
+        self.start_button.grid(row=0, column=0, padx=(0, 10), pady=5)
         self.start_button.config(state=tk.DISABLED)  # 初始状态禁用
         
-        self.stop_button = ttk.Button(button_frame, text="停止录制", 
+        self.stop_button = ttk.Button(main_action_frame, text="停止录制", 
                                      command=self.stop_recording)
-        self.stop_button.grid(row=0, column=1, padx=(0, 10), pady=5, sticky=tk.W)
+        self.stop_button.grid(row=0, column=1, padx=(0, 10), pady=5)
         self.stop_button.config(state=tk.DISABLED)  # 初始状态禁用
         
-        self.payload_button = ttk.Button(button_frame, text="获取 Payload", 
+        self.payload_button = ttk.Button(main_action_frame, text="获取 Payload", 
                                         command=self.get_payload)
-        self.payload_button.grid(row=0, column=2, padx=(0, 10), pady=5, sticky=tk.W)
+        self.payload_button.grid(row=0, column=2, padx=(0, 10), pady=5)
         
-        self.preview_button = ttk.Button(button_frame, text="测试预览", 
-                                        command=self.toggle_preview)
-        self.preview_button.grid(row=0, column=3, padx=(0, 10), pady=5, sticky=tk.W)
+        # ADB设备管理区域
+        adb_frame = ttk.LabelFrame(control_frame, text="ADB设备管理", padding="5")
+        adb_frame.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(0, 10))
+        adb_frame.columnconfigure(1, weight=1)
         
-        # 第二行：摄像头和设备连接区域
-        ttk.Label(button_frame, text="摄像头:").grid(row=1, column=0, sticky=tk.W, pady=(10, 5))
-        
-        self.camera_var = tk.StringVar()
-        self.camera_combo = ttk.Combobox(button_frame, textvariable=self.camera_var, 
-                                        width=20, state="readonly", font=("Arial", 9))
-        self.camera_combo.grid(row=1, column=1, padx=(0, 10), pady=(10, 5), sticky=tk.W)
-        self.camera_combo.bind('<<ComboboxSelected>>', self.on_camera_change)
-        
-        ttk.Label(button_frame, text="设备IP:").grid(row=1, column=2, sticky=tk.W, pady=(10, 5))
+        # 设备IP输入行
+        ttk.Label(adb_frame, text="设备IP:").grid(row=0, column=0, sticky=tk.W, padx=(0, 5), pady=2)
         
         self.device_ip_var = tk.StringVar()
-        self.device_ip_entry = ttk.Entry(button_frame, textvariable=self.device_ip_var, 
-                                        width=15, font=("Arial", 9))
-        self.device_ip_entry.grid(row=1, column=3, padx=(0, 10), pady=(10, 5), sticky=tk.W)
-        # 设置保存的IP地址
+        self.device_ip_entry = ttk.Entry(adb_frame, textvariable=self.device_ip_var, width=20)
+        self.device_ip_entry.grid(row=0, column=1, padx=(0, 10), pady=2, sticky=(tk.W, tk.E))
         self.device_ip_var.set(self.saved_device_ip)
-        # 绑定变化事件以自动保存
         self.device_ip_var.trace_add('write', self.on_ip_change)
         
-        # 第三行：连接按钮区域
-        self.connect_ip_button = ttk.Button(button_frame, text="连接IP设备", 
+        self.connect_ip_button = ttk.Button(adb_frame, text="连接ADB设备", 
                                            command=self.connect_device_by_ip)
-        self.connect_ip_button.grid(row=2, column=0, padx=(0, 10), pady=(5, 5), sticky=tk.W)
+        self.connect_ip_button.grid(row=0, column=2, padx=(0, 10), pady=2)
         
-        self.connect_button = ttk.Button(button_frame, text="检查设备连接", 
-                                        command=self.check_device_connection)
-        self.connect_button.grid(row=2, column=1, padx=(0, 10), pady=(5, 5), sticky=tk.W)
-        
-        # 第四行：设备管理
-        self.disconnect_button = ttk.Button(button_frame, text="断开设备", 
+        # ADB操作按钮行
+        self.disconnect_button = ttk.Button(adb_frame, text="断开ADB设备", 
                                            command=self.disconnect_device)
-        self.disconnect_button.grid(row=3, column=0, padx=(0, 10), pady=(5, 10), sticky=tk.W)
+        self.disconnect_button.grid(row=1, column=0, padx=(0, 10), pady=2)
         
-        self.adb_config_button = ttk.Button(button_frame, text="重新配置ADB", 
+        self.adb_config_button = ttk.Button(adb_frame, text="重新配置ADB", 
                                            command=self.reconfigure_adb)
-        self.adb_config_button.grid(row=3, column=1, padx=(0, 10), pady=(5, 10), sticky=tk.W)
+        self.adb_config_button.grid(row=1, column=1, padx=(0, 10), pady=2)
         
-        self.refresh_camera_button = ttk.Button(button_frame, text="刷新摄像头", 
+        # 摄像头管理区域
+        camera_frame = ttk.LabelFrame(control_frame, text="摄像头管理", padding="5")
+        camera_frame.grid(row=2, column=0, sticky=(tk.W, tk.E), pady=(0, 10))
+        camera_frame.columnconfigure(1, weight=1)
+        
+        # 摄像头选择行
+        ttk.Label(camera_frame, text="摄像头:").grid(row=0, column=0, sticky=tk.W, padx=(0, 5), pady=2)
+        
+        self.camera_var = tk.StringVar()
+        self.camera_combo = ttk.Combobox(camera_frame, textvariable=self.camera_var, 
+                                        state="readonly", font=("Arial", 9))
+        self.camera_combo.grid(row=0, column=1, padx=(0, 10), pady=2, sticky=(tk.W, tk.E))
+        self.camera_combo.bind('<<ComboboxSelected>>', self.on_camera_change)
+        
+        self.refresh_camera_button = ttk.Button(camera_frame, text="刷新摄像头", 
                                                command=self.refresh_cameras)
-        self.refresh_camera_button.grid(row=3, column=2, padx=(0, 10), pady=(5, 10), sticky=tk.W)
+        self.refresh_camera_button.grid(row=0, column=2, padx=(0, 10), pady=2)
         
-        self.test_camera_button = ttk.Button(button_frame, text="测试摄像头", 
+        # 摄像头操作按钮行
+        self.connect_button = ttk.Button(camera_frame, text="启动摄像头", 
+                                        command=self.start_camera_system)
+        self.connect_button.grid(row=1, column=0, padx=(0, 10), pady=2)
+        
+        self.test_camera_button = ttk.Button(camera_frame, text="测试摄像头", 
                                            command=self.test_selected_camera)
-        self.test_camera_button.grid(row=3, column=3, padx=(0, 10), pady=(5, 10), sticky=tk.W)
+        self.test_camera_button.grid(row=1, column=1, padx=(0, 10), pady=2)
+        
+        self.preview_button = ttk.Button(camera_frame, text="测试预览", 
+                                        command=self.toggle_preview)
+        self.preview_button.grid(row=1, column=2, padx=(0, 10), pady=2)
         
         # 状态栏
         self.status_var = tk.StringVar()
@@ -973,8 +985,8 @@ class AndroidControlApp:
         """检查ADB是否已安装（使用内置ADB工具）"""
         return self.adb_ready
             
-    def check_device_connection(self):
-        """检查已连接的Android设备并启动摄像头"""
+    def start_camera_system(self):
+        """检查已连接的Android设备并启动摄像头系统"""
         if not self.adb_ready:
             self.log("错误: ADB工具未就绪")
             self.status_var.set("ADB工具未就绪")
@@ -995,29 +1007,29 @@ class AndroidControlApp:
                     devices = [line for line in lines if line.strip() and 'device' in line]
                     
                     if devices:
-                        self.log(f"找到 {len(devices)} 个已连接设备:")
+                        self.log(f"✓ 找到 {len(devices)} 个已连接设备:")
                         for device in devices:
                             self.log(f"  - {device}")
                         
                         # 设备连接成功，启动摄像头
-                        self.log("设备已连接，正在启动摄像头...")
+                        self.log("设备已连接，正在启动摄像头系统...")
                         if self.start_camera():
-                            self.status_var.set("设备已连接，摄像头就绪")
+                            self.status_var.set("摄像头系统就绪")
                             # 启用开始录制按钮
                             self.start_button.config(state=tk.NORMAL)
                             self.stop_button.config(state=tk.NORMAL)
-                            messagebox.showinfo("连接检查", f"找到 {len(devices)} 个设备，摄像头已启动！")
+                            messagebox.showinfo("摄像头系统", f"找到 {len(devices)} 个设备，摄像头系统已启动！")
                         else:
                             self.status_var.set("摄像头启动失败")
                             messagebox.showerror("摄像头错误", "设备已连接，但摄像头启动失败")
                     else:
-                        self.log("未找到已连接的设备")
-                        self.log("请先使用'连接IP设备'功能连接您的Android设备，或确保:")
+                        self.log("✗ 未找到已连接的设备")
+                        self.log("请先使用'连接ADB设备'功能连接您的Android设备，或确保:")
                         self.log("1. 设备已开启开发者选项和USB调试")
                         self.log("2. 设备与电脑在同一WiFi网络")
                         self.log("3. 设备已通过无线方式连接")
                         self.status_var.set("未找到设备")
-                        messagebox.showinfo("设备检查", "未找到已连接的设备。\n\n请先使用'连接IP设备'功能连接您的Android设备。")
+                        messagebox.showinfo("设备检查", "未找到已连接的设备。\n\n请先使用'连接ADB设备'功能连接您的Android设备。")
                 else:
                     self.log(f"ADB 命令执行失败: {result.stderr}")
                     self.status_var.set("检查失败")
@@ -1032,7 +1044,7 @@ class AndroidControlApp:
         threading.Thread(target=check_thread, daemon=True).start()
         
     def connect_device_by_ip(self):
-        """通过IP地址连接Android设备"""
+        """通过IP地址连接Android设备 - 仅连接ADB，不启动摄像头"""
         if not self.adb_ready:
             self.log("错误: ADB工具未就绪")
             self.status_var.set("ADB工具未就绪")
@@ -1059,39 +1071,29 @@ class AndroidControlApp:
                     self.log(f"连接结果: {output}")
                     
                     if "connected" in output.lower() or "already connected" in output.lower():
-                        self.log("设备连接成功！")
-                        self.status_var.set("设备已连接")
-                        
-                        # 显示成功消息并询问是否启动摄像头
-                        result = messagebox.askyesno("连接成功", 
-                                                   f"设备 {device_ip} 连接成功！\n\n是否立即启动摄像头？")
-                        
-                        if result:
-                            # 用户选择启动摄像头，等待一下再验证并启动
-                            time.sleep(2)
-                            self.verify_and_start_camera()
-                        else:
-                            self.log("设备已连接，请点击'检查设备连接'按钮启动摄像头")
+                        self.log("✓ ADB设备连接成功！")
+                        self.status_var.set("ADB设备已连接")
+                        self.log("提示: 请点击'启动摄像头'按钮启动录制功能")
                     else:
-                        self.log(f"连接失败: {output}")
+                        self.log(f"✗ 连接失败: {output}")
                         self.status_var.set("连接失败")
                         messagebox.showerror("连接失败", 
                                            f"无法连接到设备 {device_ip}:5555\n\n错误信息: {output}\n\n请确保:\n1. 设备已开启开发者选项和USB调试\n2. 设备已开启无线调试\n3. 设备与电脑在同一WiFi网络\n4. IP地址正确")
                 else:
-                    error_msg = result.stderr.strip() if result.stderr else "未知错误"
-                    self.log(f"ADB connect 命令执行失败: {error_msg}")
+                    error_msg = result.stderr.strip() or "未知错误"
+                    self.log(f"✗ ADB连接命令失败: {error_msg}")
                     self.status_var.set("连接失败")
-                    messagebox.showerror("连接失败", f"ADB命令执行失败: {error_msg}")
+                    messagebox.showerror("连接失败", f"ADB连接失败:\n{error_msg}")
                     
             except subprocess.TimeoutExpired:
-                self.log("连接超时，请检查网络连接和设备状态")
+                self.log("✗ 连接超时")
                 self.status_var.set("连接超时")
-                messagebox.showerror("连接超时", "连接设备超时，请检查:\n1. 网络连接是否正常\n2. 设备IP地址是否正确\n3. 设备是否开启无线调试")
+                messagebox.showerror("连接超时", "连接设备超时，请检查网络连接和设备状态")
             except Exception as e:
-                self.log(f"连接设备时发生错误: {str(e)}")
+                self.log(f"✗ 连接时发生错误: {str(e)}")
                 self.status_var.set("连接错误")
-                messagebox.showerror("连接错误", f"连接设备时发生错误: {str(e)}")
-                
+                messagebox.showerror("连接错误", f"连接过程中发生错误:\n{str(e)}")
+        
         threading.Thread(target=connect_ip_thread, daemon=True).start()
         
     def verify_and_start_camera(self):
