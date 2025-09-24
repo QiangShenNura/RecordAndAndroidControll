@@ -42,6 +42,11 @@ class AndroidControlApp:
         self.adb_path = None
         self.adb_ready = False
         
+        # scrcpy工具路径和状态
+        self.scrcpy_path = None
+        self.scrcpy_ready = False
+        self.scrcpy_process = None  # scrcpy进程
+        
         # 摄像头选择
         self.available_cameras = []
         self.selected_camera_index = 0
@@ -54,6 +59,9 @@ class AndroidControlApp:
         
         # 自动配置ADB工具
         self.setup_adb_tools()
+        
+        # 自动配置scrcpy工具
+        self.setup_scrcpy_tools()
         
         # 设置UI
         self.setup_ui()
@@ -305,6 +313,285 @@ class AndroidControlApp:
                 
         threading.Thread(target=reconfigure_thread, daemon=True).start()
         
+    def setup_scrcpy_tools(self):
+        """自动配置scrcpy工具"""
+        self.log("正在配置scrcpy工具...")
+        
+        try:
+            # 获取当前系统类型
+            system = platform.system()
+            
+            if system == "Darwin":  # macOS
+                # macOS使用brew安装scrcpy
+                self.log("检测到macOS系统，检查scrcpy安装状态...")
+                if self.check_scrcpy_brew():
+                    self.log("✓ scrcpy已通过brew安装")
+                    self.scrcpy_ready = True
+                    return True
+                else:
+                    self.log("scrcpy未安装，尝试通过brew安装...")
+                    if self.install_scrcpy_brew():
+                        self.log("✓ scrcpy安装成功")
+                        self.scrcpy_ready = True
+                        return True
+                    else:
+                        self.log("✗ scrcpy安装失败")
+                        return False
+                        
+            elif system == "Windows":
+                # Windows使用预下载的scrcpy压缩包
+                self.log("检测到Windows系统，查找scrcpy工具包...")
+                scrcpy_zip_files = glob.glob("scrcpy*.zip")
+                
+                if not scrcpy_zip_files:
+                    self.log("✗ 未找到scrcpy工具包，请下载scrcpy Windows版本压缩包到项目目录")
+                    self.log("下载地址: https://github.com/Genymobile/scrcpy/releases")
+                    return False
+                
+                # 使用找到的第一个scrcpy压缩包
+                scrcpy_zip = scrcpy_zip_files[0]
+                self.log(f"找到scrcpy工具包: {scrcpy_zip}")
+                
+                # 检查是否已经解压
+                scrcpy_dir = "scrcpy"
+                scrcpy_exe = os.path.join(scrcpy_dir, "scrcpy.exe")
+                
+                if os.path.exists(scrcpy_exe) and self.test_scrcpy_executable(scrcpy_exe):
+                    self.scrcpy_path = os.path.abspath(scrcpy_exe)
+                    self.scrcpy_ready = True
+                    self.log(f"✓ scrcpy工具已就绪: {self.scrcpy_path}")
+                    return True
+                else:
+                    # 解压scrcpy工具包
+                    self.log(f"正在解压 {scrcpy_zip}...")
+                    try:
+                        with zipfile.ZipFile(scrcpy_zip, 'r') as zip_ref:
+                            # 获取压缩包内的根目录名
+                            first_file = zip_ref.namelist()[0]
+                            root_folder = first_file.split('/')[0] if '/' in first_file else first_file.split('\\')[0]
+                            
+                            # 解压到临时目录
+                            zip_ref.extractall('.')
+                            
+                            # 如果解压出的目录不是scrcpy，重命名它
+                            if root_folder != "scrcpy" and os.path.exists(root_folder):
+                                if os.path.exists("scrcpy"):
+                                    shutil.rmtree("scrcpy")
+                                os.rename(root_folder, "scrcpy")
+                            
+                        self.log("✓ scrcpy工具包解压完成")
+                        
+                        # 设置scrcpy可执行文件路径
+                        self.scrcpy_path = os.path.abspath(scrcpy_exe)
+                        
+                        # 测试scrcpy是否可用
+                        if self.test_scrcpy_executable(self.scrcpy_path):
+                            self.scrcpy_ready = True
+                            self.log(f"✓ scrcpy工具配置成功: {self.scrcpy_path}")
+                            return True
+                        else:
+                            self.log("✗ scrcpy工具测试失败")
+                            return False
+                            
+                    except Exception as e:
+                        self.log(f"解压scrcpy工具包失败: {str(e)}")
+                        return False
+            else:
+                # Linux系统
+                self.log("检测到Linux系统，检查系统scrcpy安装...")
+                if self.check_scrcpy_system():
+                    self.log("✓ 系统已安装scrcpy")
+                    self.scrcpy_ready = True
+                    return True
+                else:
+                    self.log("✗ scrcpy未安装，请手动安装: sudo apt install scrcpy")
+                    return False
+                    
+        except Exception as e:
+            self.log(f"配置scrcpy工具时发生错误: {str(e)}")
+            return False
+            
+    def check_scrcpy_brew(self):
+        """检查macOS上是否通过brew安装了scrcpy"""
+        try:
+            # 检查brew是否安装
+            result = subprocess.run(['brew', '--version'], 
+                                  capture_output=True, text=True, timeout=5)
+            if result.returncode != 0:
+                self.log("brew未安装，无法自动安装scrcpy")
+                return False
+            
+            # 检查scrcpy是否已安装
+            result = subprocess.run(['brew', 'list', 'scrcpy'], 
+                                  capture_output=True, text=True, timeout=10)
+            if result.returncode == 0:
+                # 检查scrcpy是否可用
+                return self.check_scrcpy_system()
+            return False
+            
+        except Exception as e:
+            self.log(f"检查brew scrcpy时发生错误: {str(e)}")
+            return False
+            
+    def install_scrcpy_brew(self):
+        """通过brew安装scrcpy"""
+        try:
+            self.log("正在通过brew安装scrcpy...")
+            result = subprocess.run(['brew', 'install', 'scrcpy'], 
+                                  capture_output=True, text=True, timeout=300)  # 5分钟超时
+            
+            if result.returncode == 0:
+                self.log("brew安装scrcpy成功")
+                # 再次检查是否可用
+                return self.check_scrcpy_system()
+            else:
+                self.log(f"brew安装scrcpy失败: {result.stderr}")
+                return False
+                
+        except subprocess.TimeoutExpired:
+            self.log("brew安装scrcpy超时")
+            return False
+        except Exception as e:
+            self.log(f"通过brew安装scrcpy时发生错误: {str(e)}")
+            return False
+            
+    def check_scrcpy_system(self):
+        """检查系统是否安装了scrcpy"""
+        try:
+            result = subprocess.run(['scrcpy', '--version'], 
+                                  capture_output=True, text=True, timeout=5)
+            if result.returncode == 0:
+                version_info = result.stdout.strip().split('\n')[0]
+                self.log(f"scrcpy版本: {version_info}")
+                self.scrcpy_path = "scrcpy"  # 系统路径
+                return True
+            return False
+            
+        except Exception as e:
+            return False
+            
+    def test_scrcpy_executable(self, scrcpy_path):
+        """测试scrcpy可执行文件是否正常工作"""
+        try:
+            result = subprocess.run([scrcpy_path, '--version'], 
+                                  capture_output=True, text=True, timeout=10)
+            if result.returncode == 0:
+                version_info = result.stdout.strip().split('\n')[0]
+                self.log(f"scrcpy版本: {version_info}")
+                return True
+            else:
+                self.log(f"scrcpy测试失败: {result.stderr}")
+                return False
+        except Exception as e:
+            self.log(f"scrcpy测试过程中发生错误: {str(e)}")
+            return False
+            
+    def get_scrcpy_command(self, *args):
+        """构建scrcpy命令"""
+        if not self.scrcpy_ready or not self.scrcpy_path:
+            raise RuntimeError("scrcpy工具未就绪")
+        return [self.scrcpy_path] + list(args)
+        
+    def start_scrcpy(self, device_id=None):
+        """启动scrcpy屏幕镜像"""
+        if not self.scrcpy_ready:
+            self.log("✗ scrcpy工具未就绪，无法启动屏幕镜像")
+            return False
+            
+        try:
+            # 构建scrcpy命令
+            if device_id:
+                scrcpy_cmd = self.get_scrcpy_command('-s', device_id)
+                self.log(f"启动scrcpy连接到设备: {device_id}")
+            else:
+                scrcpy_cmd = self.get_scrcpy_command()
+                self.log("启动scrcpy连接到默认设备")
+            
+            # 启动scrcpy进程（后台运行）
+            self.scrcpy_process = subprocess.Popen(
+                scrcpy_cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True
+            )
+            
+            self.log("✓ scrcpy屏幕镜像已启动")
+            return True
+            
+        except Exception as e:
+            self.log(f"✗ 启动scrcpy失败: {str(e)}")
+            return False
+            
+    def stop_scrcpy(self):
+        """停止scrcpy进程"""
+        if self.scrcpy_process:
+            try:
+                self.log("正在关闭scrcpy...")
+                self.scrcpy_process.terminate()
+                try:
+                    self.scrcpy_process.wait(timeout=5)
+                    self.log("✓ scrcpy已正常关闭")
+                except subprocess.TimeoutExpired:
+                    self.scrcpy_process.kill()
+                    self.log("✓ scrcpy已强制关闭")
+                    
+                self.scrcpy_process = None
+                
+            except Exception as e:
+                self.log(f"关闭scrcpy时发生错误: {str(e)}")
+                
+    def reconfigure_adb_and_scrcpy(self):
+        """重新配置ADB和scrcpy工具"""
+        self.log("开始重新配置ADB和scrcpy工具...")
+        
+        def reconfigure_thread():
+            try:
+                # 停止scrcpy
+                if self.scrcpy_process:
+                    self.stop_scrcpy()
+                
+                # 停止当前ADB服务器
+                if self.adb_ready and self.adb_path:
+                    try:
+                        kill_cmd = self.get_adb_command('kill-server')
+                        subprocess.run(kill_cmd, capture_output=True, timeout=5)
+                        self.log("已停止现有ADB服务器")
+                    except:
+                        pass
+                
+                # 删除现有platform-tools目录
+                tools_dir = "platform-tools"
+                if os.path.exists(tools_dir):
+                    self.log("删除现有ADB工具...")
+                    shutil.rmtree(tools_dir)
+                
+                # 重新配置ADB
+                self.adb_ready = False
+                self.adb_path = None
+                
+                adb_success = self.setup_adb_tools()
+                
+                # 重新配置scrcpy
+                self.scrcpy_ready = False
+                self.scrcpy_path = None
+                self.scrcpy_process = None
+                
+                scrcpy_success = self.setup_scrcpy_tools()
+                
+                if adb_success and scrcpy_success:
+                    self.log("✓ ADB和scrcpy工具重新配置完成")
+                elif adb_success:
+                    self.log("✓ ADB工具重新配置完成，scrcpy配置失败")
+                elif scrcpy_success:
+                    self.log("✓ scrcpy工具重新配置完成，ADB配置失败")
+                else:
+                    self.log("✗ ADB和scrcpy工具重新配置失败")
+                    
+            except Exception as e:
+                self.log(f"重新配置时发生错误: {str(e)}")
+                
+        threading.Thread(target=reconfigure_thread, daemon=True).start()
+        
     def detect_cameras(self):
         """检测可用的摄像头设备"""
         self.available_cameras = []
@@ -536,8 +823,8 @@ class AndroidControlApp:
                                            command=self.disconnect_device)
         self.disconnect_button.grid(row=1, column=0, padx=(0, 10), pady=2)
         
-        self.adb_config_button = ttk.Button(adb_frame, text="重新配置ADB", 
-                                           command=self.reconfigure_adb)
+        self.adb_config_button = ttk.Button(adb_frame, text="配置ADB/scrcpy", 
+                                           command=self.reconfigure_adb_and_scrcpy)
         self.adb_config_button.grid(row=1, column=1, padx=(0, 10), pady=2)
         
         # 摄像头管理区域
@@ -979,6 +1266,19 @@ class AndroidControlApp:
             self.log("✗ 内置ADB工具未就绪")
             self.log("请检查ADB工具包是否正确解压")
             
+        # 检查scrcpy工具
+        if self.scrcpy_ready:
+            self.log("✓ scrcpy工具已就绪")
+        else:
+            self.log("✗ scrcpy工具未就绪")
+            system = platform.system()
+            if system == "Darwin":
+                self.log("请确保已安装Homebrew，或点击'配置ADB/scrcpy'按钮自动安装")
+            elif system == "Windows":
+                self.log("请下载scrcpy Windows版本并放置在项目目录中")
+            else:
+                self.log("请手动安装scrcpy: sudo apt install scrcpy")
+            
         # 检查录制脚本
         if os.path.exists("record_script.py"):
             self.log("✓ 录制脚本已找到")
@@ -1076,7 +1376,21 @@ class AndroidControlApp:
                     
                     if "connected" in output.lower() or "already connected" in output.lower():
                         self.log("✓ ADB设备连接成功！")
-                        self.status_var.set("ADB设备已连接")
+                        
+                        # ADB连接成功后，启动scrcpy
+                        if self.scrcpy_ready:
+                            self.log("正在启动scrcpy屏幕镜像...")
+                            device_address = f'{device_ip}:5555'
+                            if self.start_scrcpy(device_address):
+                                self.status_var.set("ADB设备已连接，scrcpy已启动")
+                                self.log("✓ scrcpy屏幕镜像启动成功")
+                            else:
+                                self.status_var.set("ADB设备已连接，scrcpy启动失败")
+                                self.log("⚠ scrcpy屏幕镜像启动失败，但ADB连接成功")
+                        else:
+                            self.status_var.set("ADB设备已连接")
+                            self.log("⚠ scrcpy工具未就绪，无法启动屏幕镜像")
+                            
                         self.log("提示: 请点击'启动摄像头'按钮启动录制功能")
                     else:
                         self.log(f"✗ 连接失败: {output}")
@@ -1156,6 +1470,10 @@ class AndroidControlApp:
                     # 先停止录制和预览
                     self.stop_recording()
                     
+                    # 停止scrcpy
+                    if self.scrcpy_process:
+                        self.stop_scrcpy()
+                    
                     # 执行 adb disconnect 命令
                     adb_cmd = self.get_adb_command('disconnect')
                     result = subprocess.run(adb_cmd, 
@@ -1185,6 +1503,10 @@ class AndroidControlApp:
                 try:
                     # 先停止录制和预览
                     self.stop_recording()
+                    
+                    # 停止scrcpy
+                    if self.scrcpy_process:
+                        self.stop_scrcpy()
                     
                     # 执行 adb disconnect 命令
                     adb_cmd = self.get_adb_command('disconnect', f'{device_ip}:5555')
@@ -1484,6 +1806,10 @@ class AndroidControlApp:
         if self.preview_active:
             self.stop_preview()
         
+        # 停止scrcpy
+        if self.scrcpy_process:
+            self.stop_scrcpy()
+        
         # 关闭录制进程
         if self.record_process:
             try:
@@ -1619,6 +1945,13 @@ def main():
         """程序关闭时的清理工作"""
         # 保存最新配置
         app.save_config()
+        
+        # 停止scrcpy
+        if hasattr(app, 'scrcpy_process') and app.scrcpy_process:
+            try:
+                app.stop_scrcpy()
+            except:
+                pass
         
         if hasattr(app, 'record_process') and app.record_process:
             try:
