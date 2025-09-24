@@ -740,7 +740,8 @@ class AndroidControlApp:
         left_frame = ttk.Frame(main_frame)
         left_frame.grid(row=1, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), padx=(0, 10))
         left_frame.columnconfigure(0, weight=1)
-        left_frame.rowconfigure(0, weight=1)
+        left_frame.rowconfigure(0, weight=3)  # 日志区域权重更大
+        left_frame.rowconfigure(1, weight=0)  # 使用说明区域固定大小
         
         # 日志显示区域
         log_frame = ttk.LabelFrame(left_frame, text="日志输出", padding="5")
@@ -750,6 +751,19 @@ class AndroidControlApp:
         
         self.log_text = scrolledtext.ScrolledText(log_frame, height=20, width=60)
         self.log_text.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        
+        # 使用说明区域
+        usage_frame = ttk.LabelFrame(left_frame, text="使用说明", padding="5")
+        usage_frame.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(0, 10))
+        usage_frame.columnconfigure(0, weight=1)
+        
+        usage_text = ttk.Label(usage_frame, 
+                              text="①点击\"连接adb设备\"(第一次启动需点击\"配置ADB/scrcpy\"按钮)\n②点击\"启动摄像头\"\n③点击\"开始测量并录制\"",
+                              font=("Arial", 10),
+                              foreground="navy",
+                              wraplength=500,
+                              justify=tk.LEFT)
+        usage_text.grid(row=0, column=0, sticky=(tk.W, tk.E), padx=5, pady=5)
         
         # 右侧预览区域
         right_frame = ttk.Frame(main_frame)
@@ -778,11 +792,69 @@ class AndroidControlApp:
         control_frame.grid(row=2, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(10, 0))
         control_frame.columnconfigure(0, weight=1)
         
-        # 主要操作区域
-        main_action_frame = ttk.LabelFrame(control_frame, text="主要操作", padding="5")
-        main_action_frame.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=(0, 10))
+        # ①ADB设备管理区域（第一步）
+        adb_frame = ttk.LabelFrame(control_frame, text="①ADB设备管理", padding="5")
+        adb_frame.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=(0, 10))
+        adb_frame.columnconfigure(2, weight=1)  # 让第2列（IP输入框）可扩展
         
-        self.start_button = ttk.Button(main_action_frame, text="开始测量并录制", 
+        # 第一行：连接ADB设备按钮（最左边） + 设备IP输入 
+        self.connect_ip_button = ttk.Button(adb_frame, text="①连接ADB设备", 
+                                           command=self.connect_device_by_ip)
+        self.connect_ip_button.grid(row=0, column=0, padx=(0, 10), pady=2)
+        
+        ttk.Label(adb_frame, text="设备IP:").grid(row=0, column=1, sticky=tk.W, padx=(0, 5), pady=2)
+        
+        self.device_ip_var = tk.StringVar()
+        self.device_ip_entry = ttk.Entry(adb_frame, textvariable=self.device_ip_var, width=15)  # 缩短宽度
+        self.device_ip_entry.grid(row=0, column=2, padx=(0, 10), pady=2, sticky=(tk.W))
+        self.device_ip_var.set(self.saved_device_ip)
+        self.device_ip_var.trace_add('write', self.on_ip_change)
+        
+        # ADB操作按钮行
+        self.disconnect_button = ttk.Button(adb_frame, text="断开ADB设备", 
+                                           command=self.disconnect_device)
+        self.disconnect_button.grid(row=1, column=0, padx=(0, 10), pady=2)
+        
+        self.adb_config_button = ttk.Button(adb_frame, text="配置ADB/scrcpy", 
+                                           command=self.reconfigure_adb_and_scrcpy)
+        self.adb_config_button.grid(row=1, column=1, columnspan=2, padx=(0, 10), pady=2, sticky=(tk.W))
+        
+        # ②摄像头管理区域（第二步）
+        camera_frame = ttk.LabelFrame(control_frame, text="②摄像头管理", padding="5")
+        camera_frame.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(0, 10))
+        camera_frame.columnconfigure(1, weight=1)  # 让摄像头选择框可扩展但不过度
+        
+        # 摄像头选择行
+        ttk.Label(camera_frame, text="摄像头:").grid(row=0, column=0, sticky=tk.W, padx=(0, 5), pady=2)
+        
+        self.camera_var = tk.StringVar()
+        self.camera_combo = ttk.Combobox(camera_frame, textvariable=self.camera_var, 
+                                        state="readonly", font=("Arial", 9), width=25)  # 设置固定宽度
+        self.camera_combo.grid(row=0, column=1, padx=(0, 10), pady=2, sticky=(tk.W))
+        self.camera_combo.bind('<<ComboboxSelected>>', self.on_camera_change)
+        
+        self.refresh_camera_button = ttk.Button(camera_frame, text="刷新摄像头", 
+                                               command=self.refresh_cameras)
+        self.refresh_camera_button.grid(row=0, column=2, padx=(0, 10), pady=2)
+        
+        # 摄像头操作按钮行
+        self.connect_button = ttk.Button(camera_frame, text="②启动摄像头", 
+                                        command=self.start_camera_system)
+        self.connect_button.grid(row=1, column=0, padx=(0, 10), pady=2)
+        
+        self.test_camera_button = ttk.Button(camera_frame, text="测试摄像头", 
+                                           command=self.test_selected_camera)
+        self.test_camera_button.grid(row=1, column=1, padx=(0, 10), pady=2)
+        
+        self.preview_button = ttk.Button(camera_frame, text="测试预览", 
+                                        command=self.toggle_preview)
+        self.preview_button.grid(row=1, column=2, padx=(0, 10), pady=2)
+        
+        # ③主要操作区域（第三步）
+        main_action_frame = ttk.LabelFrame(control_frame, text="③主要操作", padding="5")
+        main_action_frame.grid(row=2, column=0, sticky=(tk.W, tk.E), pady=(0, 10))
+        
+        self.start_button = ttk.Button(main_action_frame, text="③开始测量并录制", 
                                       command=self.start_measure_and_record,
                                       style="Accent.TButton")
         self.start_button.grid(row=0, column=0, padx=(0, 10), pady=5)
@@ -800,64 +872,6 @@ class AndroidControlApp:
         self.open_folder_button = ttk.Button(main_action_frame, text="打开文件夹", 
                                            command=self.open_payload_folder)
         self.open_folder_button.grid(row=0, column=3, padx=(0, 10), pady=5)
-        
-        # ADB设备管理区域
-        adb_frame = ttk.LabelFrame(control_frame, text="ADB设备管理", padding="5")
-        adb_frame.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(0, 10))
-        adb_frame.columnconfigure(1, weight=1)
-        
-        # 设备IP输入行
-        ttk.Label(adb_frame, text="设备IP:").grid(row=0, column=0, sticky=tk.W, padx=(0, 5), pady=2)
-        
-        self.device_ip_var = tk.StringVar()
-        self.device_ip_entry = ttk.Entry(adb_frame, textvariable=self.device_ip_var, width=20)
-        self.device_ip_entry.grid(row=0, column=1, padx=(0, 10), pady=2, sticky=(tk.W, tk.E))
-        self.device_ip_var.set(self.saved_device_ip)
-        self.device_ip_var.trace_add('write', self.on_ip_change)
-        
-        self.connect_ip_button = ttk.Button(adb_frame, text="连接ADB设备", 
-                                           command=self.connect_device_by_ip)
-        self.connect_ip_button.grid(row=0, column=2, padx=(0, 10), pady=2)
-        
-        # ADB操作按钮行
-        self.disconnect_button = ttk.Button(adb_frame, text="断开ADB设备", 
-                                           command=self.disconnect_device)
-        self.disconnect_button.grid(row=1, column=0, padx=(0, 10), pady=2)
-        
-        self.adb_config_button = ttk.Button(adb_frame, text="配置ADB/scrcpy", 
-                                           command=self.reconfigure_adb_and_scrcpy)
-        self.adb_config_button.grid(row=1, column=1, padx=(0, 10), pady=2)
-        
-        # 摄像头管理区域
-        camera_frame = ttk.LabelFrame(control_frame, text="摄像头管理", padding="5")
-        camera_frame.grid(row=2, column=0, sticky=(tk.W, tk.E), pady=(0, 10))
-        camera_frame.columnconfigure(1, weight=1)
-        
-        # 摄像头选择行
-        ttk.Label(camera_frame, text="摄像头:").grid(row=0, column=0, sticky=tk.W, padx=(0, 5), pady=2)
-        
-        self.camera_var = tk.StringVar()
-        self.camera_combo = ttk.Combobox(camera_frame, textvariable=self.camera_var, 
-                                        state="readonly", font=("Arial", 9))
-        self.camera_combo.grid(row=0, column=1, padx=(0, 10), pady=2, sticky=(tk.W, tk.E))
-        self.camera_combo.bind('<<ComboboxSelected>>', self.on_camera_change)
-        
-        self.refresh_camera_button = ttk.Button(camera_frame, text="刷新摄像头", 
-                                               command=self.refresh_cameras)
-        self.refresh_camera_button.grid(row=0, column=2, padx=(0, 10), pady=2)
-        
-        # 摄像头操作按钮行
-        self.connect_button = ttk.Button(camera_frame, text="启动摄像头", 
-                                        command=self.start_camera_system)
-        self.connect_button.grid(row=1, column=0, padx=(0, 10), pady=2)
-        
-        self.test_camera_button = ttk.Button(camera_frame, text="测试摄像头", 
-                                           command=self.test_selected_camera)
-        self.test_camera_button.grid(row=1, column=1, padx=(0, 10), pady=2)
-        
-        self.preview_button = ttk.Button(camera_frame, text="测试预览", 
-                                        command=self.toggle_preview)
-        self.preview_button.grid(row=1, column=2, padx=(0, 10), pady=2)
         
         # 状态栏
         self.status_var = tk.StringVar()
