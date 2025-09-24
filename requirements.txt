@@ -1,3 +1,12 @@
-pyinstaller>=5.0
+# GUI和图像处理依赖
+tkinter>=8.6.0; sys_platform != "linux"
 opencv-python>=4.8.0
 Pillow>=10.0.0
+
+# 打包工具
+pyinstaller>=5.0
+
+# 系统工具 (可选，某些Linux发行版需要)
+# python3-tk (Ubuntu/Debian需要单独安装)
+# adb (需要系统级安装)
+# scrcpy (需要系统级安装)

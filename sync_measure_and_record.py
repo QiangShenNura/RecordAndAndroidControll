@@ -765,21 +765,15 @@ class AndroidControlApp:
                               justify=tk.LEFT)
         usage_text.grid(row=0, column=0, sticky=(tk.W, tk.E), padx=5, pady=5)
         
-        # 右侧预览区域
+        # 右侧预览区域 - 移到顶部
         right_frame = ttk.Frame(main_frame)
         right_frame.grid(row=1, column=1, sticky=(tk.W, tk.E, tk.N, tk.S))
         right_frame.columnconfigure(0, weight=1)
-        right_frame.rowconfigure(1, weight=1)
+        right_frame.rowconfigure(0, weight=1)
         
-        # 文件名配置区域
-        filename_frame = ttk.LabelFrame(right_frame, text="视频文件名配置", padding="5")
-        filename_frame.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=(0, 10))
-        
-        self.setup_filename_ui(filename_frame)
-        
-        # 预览区域
+        # 摄像头预览区域 - 现在位于右侧顶部
         preview_frame = ttk.LabelFrame(right_frame, text="摄像头预览", padding="5")
-        preview_frame.grid(row=1, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        preview_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         preview_frame.columnconfigure(0, weight=1)
         preview_frame.rowconfigure(0, weight=1)
         
@@ -791,10 +785,17 @@ class AndroidControlApp:
         control_frame = ttk.Frame(main_frame)
         control_frame.grid(row=2, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(10, 0))
         control_frame.columnconfigure(0, weight=1)
+        control_frame.columnconfigure(1, weight=1)  # 为右侧文件名配置区域设置权重
         
-        # ①ADB设备管理区域（第一步）
-        adb_frame = ttk.LabelFrame(control_frame, text="①ADB设备管理", padding="5")
-        adb_frame.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=(0, 10))
+        # 第一行：①ADB设备管理 + 视频文件名配置
+        first_row_frame = ttk.Frame(control_frame)
+        first_row_frame.grid(row=0, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(0, 10))
+        first_row_frame.columnconfigure(0, weight=1)
+        first_row_frame.columnconfigure(1, weight=1)
+        
+        # ①ADB设备管理区域（第一步） - 左侧
+        adb_frame = ttk.LabelFrame(first_row_frame, text="①ADB设备管理", padding="5")
+        adb_frame.grid(row=0, column=0, sticky=(tk.W, tk.E), padx=(0, 10))
         adb_frame.columnconfigure(2, weight=1)  # 让第2列（IP输入框）可扩展
         
         # 第一行：连接ADB设备按钮（最左边） + 设备IP输入 
@@ -819,10 +820,16 @@ class AndroidControlApp:
                                            command=self.reconfigure_adb_and_scrcpy)
         self.adb_config_button.grid(row=1, column=1, columnspan=2, padx=(0, 10), pady=2, sticky=(tk.W))
         
+        # 视频文件名配置区域 - 右侧，与ADB设备管理同一行
+        filename_frame = ttk.LabelFrame(first_row_frame, text="视频文件名配置", padding="5")
+        filename_frame.grid(row=0, column=1, sticky=(tk.W, tk.E))
+        
+        self.setup_filename_ui(filename_frame)
+        
         # ②摄像头管理区域（第二步）
         camera_frame = ttk.LabelFrame(control_frame, text="②摄像头管理", padding="5")
-        camera_frame.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(0, 10))
-        camera_frame.columnconfigure(1, weight=1)  # 让摄像头选择框可扩展但不过度
+        camera_frame.grid(row=1, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(0, 10))
+        camera_frame.columnconfigure(1, weight=0)  # 不让摄像头选择框过度扩展
         
         # 摄像头选择行
         ttk.Label(camera_frame, text="摄像头:").grid(row=0, column=0, sticky=tk.W, padx=(0, 5), pady=2)
@@ -835,24 +842,27 @@ class AndroidControlApp:
         
         self.refresh_camera_button = ttk.Button(camera_frame, text="刷新摄像头", 
                                                command=self.refresh_cameras)
-        self.refresh_camera_button.grid(row=0, column=2, padx=(0, 10), pady=2)
+        self.refresh_camera_button.grid(row=0, column=2, padx=(0, 10), pady=2, sticky=(tk.W))
         
-        # 摄像头操作按钮行
-        self.connect_button = ttk.Button(camera_frame, text="②启动摄像头", 
+        # 摄像头操作按钮行 - 按钮自适应宽度，不铺满整行
+        button_frame = ttk.Frame(camera_frame)
+        button_frame.grid(row=1, column=0, columnspan=3, sticky=(tk.W), pady=2)
+        
+        self.connect_button = ttk.Button(button_frame, text="②启动摄像头", 
                                         command=self.start_camera_system)
-        self.connect_button.grid(row=1, column=0, padx=(0, 10), pady=2)
+        self.connect_button.grid(row=0, column=0, padx=(0, 10), pady=0)
         
-        self.test_camera_button = ttk.Button(camera_frame, text="测试摄像头", 
+        self.test_camera_button = ttk.Button(button_frame, text="测试摄像头", 
                                            command=self.test_selected_camera)
-        self.test_camera_button.grid(row=1, column=1, padx=(0, 10), pady=2)
+        self.test_camera_button.grid(row=0, column=1, padx=(0, 10), pady=0)
         
-        self.preview_button = ttk.Button(camera_frame, text="测试预览", 
+        self.preview_button = ttk.Button(button_frame, text="测试预览", 
                                         command=self.toggle_preview)
-        self.preview_button.grid(row=1, column=2, padx=(0, 10), pady=2)
+        self.preview_button.grid(row=0, column=2, padx=(0, 10), pady=0)
         
         # ③主要操作区域（第三步）
         main_action_frame = ttk.LabelFrame(control_frame, text="③主要操作", padding="5")
-        main_action_frame.grid(row=2, column=0, sticky=(tk.W, tk.E), pady=(0, 10))
+        main_action_frame.grid(row=2, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(0, 10))
         
         self.start_button = ttk.Button(main_action_frame, text="③开始测量并录制", 
                                       command=self.start_measure_and_record,
