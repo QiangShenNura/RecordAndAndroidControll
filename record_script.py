@@ -122,18 +122,36 @@ def main():
     print("\n等待从标准输入接收's'命令...", flush=True)
 
     try:
-        # 使用readline()来读取输入，这样更适合管道通信
-        char_received = sys.stdin.readline().strip()
-        print(f"接收到命令: '{char_received}'", flush=True)
+        # 进入持续录制循环
+        while True:
+            try:
+                # 使用readline()来读取输入，这样更适合管道通信
+                char_received = sys.stdin.readline().strip()
+                print(f"接收到命令: '{char_received}'", flush=True)
 
-        if char_received == 's':
-            record_video(cap, actual_fps, actual_width, actual_height)
-        else:
-            print("收到非's'命令，程序退出。", flush=True)
-    except EOFError:
-        print("输入流已关闭，程序退出。", flush=True)
-    except Exception as e:
-        print(f"读取输入时发生错误: {e}", flush=True)
+                if char_received == 's':
+                    record_video(cap, actual_fps, actual_width, actual_height)
+                    # 录制完成后，继续等待下一个命令
+                    print("\n等待从标准输入接收's'命令...", flush=True)
+                elif char_received == 'q' or char_received == 'quit':
+                    print("收到退出命令，程序退出。", flush=True)
+                    break
+                elif char_received == '':
+                    # EOF，退出循环
+                    print("输入流已关闭，程序退出。", flush=True)
+                    break
+                else:
+                    print(f"未知命令: '{char_received}'，继续等待...", flush=True)
+                    
+            except EOFError:
+                print("输入流已关闭，程序退出。", flush=True)
+                break
+            except Exception as e:
+                print(f"读取输入时发生错误: {e}", flush=True)
+                break
+                
+    except KeyboardInterrupt:
+        print("收到中断信号，程序退出。", flush=True)
 
     cap.release()
     cv2.destroyAllWindows()

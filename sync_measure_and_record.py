@@ -68,6 +68,9 @@ class AndroidControlApp:
         # 启动日志更新线程
         self.update_logs()
         
+        # 设置窗口关闭事件处理
+        self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
+        
     def get_config_path(self):
         """获取配置文件路径，兼容Windows和Mac"""
         system = platform.system()
@@ -98,7 +101,7 @@ class AndroidControlApp:
                 # 加载文件名配置
                 if 'filename_parts' in config:
                     self.filename_parts = config['filename_parts']
-                    self.log(f"已加载配置: 文件名 = {'-'.join(self.filename_parts)}")
+                    self.log(f"已加载配置: 文件名 = {self.get_formatted_filename()}")
                 else:
                     self.log("使用默认文件名配置")
                     
@@ -146,6 +149,15 @@ class AndroidControlApp:
             
         except Exception as e:
             self.log(f"保存配置文件失败: {str(e)}")
+            
+    def get_formatted_filename(self):
+        """获取格式化的文件名：前缀_编号-后缀"""
+        if len(self.filename_parts) >= 3:
+            # 前缀后面用下划线，其他地方用破折号
+            return f"{self.filename_parts[0]}_{self.filename_parts[1]}-{self.filename_parts[2]}"
+        else:
+            # 兼容旧格式
+            return "-".join(self.filename_parts)
             
     def increment_filename_number(self):
         """增加文件名编号并保存配置"""
@@ -298,34 +310,112 @@ class AndroidControlApp:
         self.available_cameras = []
         self.log("正在检测可用摄像头...")
         
+        # 尝试不同的后端，但优先使用默认后端（在macOS上通常工作最好）
+        backends = [cv2.CAP_ANY, cv2.CAP_AVFOUNDATION, cv2.CAP_V4L2]
+        
         for i in range(10):  # 检查0-9号摄像头
-            try:
-                cap = cv2.VideoCapture(i)
-                if cap.isOpened():
-                    # 尝试读取一帧来确认摄像头真正可用
-                    ret, frame = cap.read()
-                    if ret:
-                        width = cap.get(cv2.CAP_PROP_FRAME_WIDTH)
-                        height = cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
-                        fps = cap.get(cv2.CAP_PROP_FPS)
+            camera_found = False
+            
+            for backend in backends:
+                if camera_found:
+                    break
+                    
+                try:
+                    cap = cv2.VideoCapture(i, backend)
+                    if cap.isOpened():
+                        # 给摄像头更多时间初始化
+                        import time
+                        time.sleep(0.3)
                         
-                        camera_info = {
-                            'index': i,
-                            'name': f"摄像头 {i}",
-                            'resolution': f"{int(width)}x{int(height)}",
-                            'fps': f"{fps:.1f}"
-                        }
-                        self.available_cameras.append(camera_info)
-                        self.log(f"找到摄像头 {i}: {int(width)}x{int(height)} @ {fps:.1f}fps")
-                cap.release()
-            except:
-                continue
-                
+                        # 尝试多次读取帧，有些摄像头需要预热
+                        successful_reads = 0
+                        test_frame = None
+                        for attempt in range(10):  # 增加尝试次数
+                            ret, frame = cap.read()
+                            if ret and frame is not None:
+                                successful_reads += 1
+                                if test_frame is None:
+                                    test_frame = frame
+                            time.sleep(0.05)  # 短暂延迟
+                        
+                        # 只要有一次成功读取就认为摄像头可用
+                        if successful_reads > 0:
+                            # 获取摄像头信息
+                            width = cap.get(cv2.CAP_PROP_FRAME_WIDTH)
+                            height = cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
+                            fps = cap.get(cv2.CAP_PROP_FPS)
+                            
+                            # 如果获取的值无效，使用实际帧的尺寸
+                            if (width <= 0 or height <= 0) and test_frame is not None:
+                                height, width = test_frame.shape[:2]
+                            elif width <= 0 or height <= 0:
+                                width, height = 640, 480  # 默认值
+                            
+                            if fps <= 0 or fps > 1000:  # 有些设备返回异常高的fps值
+                                fps = 30.0  # 默认帧率
+                            
+                            # 尝试获取摄像头名称
+                            camera_name = f"摄像头 {i}"
+                            try:
+                                backend_name = cap.getBackendName() if hasattr(cap, 'getBackendName') else ""
+                                if backend_name:
+                                    camera_name = f"摄像头 {i} ({backend_name})"
+                            except:
+                                pass
+                            
+                            camera_info = {
+                                'index': i,
+                                'name': camera_name,
+                                'resolution': f"{int(width)}x{int(height)}",
+                                'fps': f"{fps:.1f}",
+                                'backend': backend,
+                                'success_rate': f"{successful_reads}/10"
+                            }
+                            
+                            # 检查是否已经添加了相同索引的摄像头（避免重复）
+                            existing = False
+                            for existing_cam in self.available_cameras:
+                                if existing_cam['index'] == i:
+                                    existing = True
+                                    break
+                            
+                            if not existing:
+                                self.available_cameras.append(camera_info)
+                                backend_name = "默认" if backend == cv2.CAP_ANY else f"后端{backend}"
+                                self.log(f"✓ 找到摄像头 {i}: {int(width)}x{int(height)} @ {fps:.1f}fps ({successful_reads}/10 帧, {backend_name})")
+                                camera_found = True
+                    
+                    cap.release()
+                    
+                except Exception as e:
+                    if cap:
+                        try:
+                            cap.release()
+                        except:
+                            pass
+                    # 继续尝试下一个后端
+                    continue
+                    
         if not self.available_cameras:
             self.log("⚠ 未找到可用摄像头")
-            messagebox.showwarning("摄像头警告", "未找到可用摄像头！\n请确保摄像头已正确连接。")
+            # 提供更详细的诊断信息
+            self.log("摄像头检测诊断：")
+            self.log("- 请确保摄像头已正确连接并被系统识别")
+            self.log("- 检查摄像头是否被其他应用程序占用")
+            self.log("- 在macOS上，请检查系统偏好设置中的摄像头权限")
+            self.log("- 尝试重新插拔USB摄像头")
+            messagebox.showwarning("摄像头警告", 
+                                 "未找到可用摄像头！\n\n可能的解决方案：\n"
+                                 "1. 确保摄像头已正确连接\n"
+                                 "2. 检查摄像头权限设置\n"
+                                 "3. 关闭其他使用摄像头的应用\n"
+                                 "4. 重新插拔USB摄像头后点击'刷新摄像头'")
         else:
             self.log(f"✓ 共找到 {len(self.available_cameras)} 个可用摄像头")
+            # 显示检测到的摄像头详情
+            for camera in self.available_cameras:
+                self.log(f"  - 摄像头 {camera['index']}: {camera['resolution']} @ {camera['fps']}fps (成功率: {camera['success_rate']})")
+            
             # 从配置中加载上次选择的摄像头
             if hasattr(self, 'saved_camera_index'):
                 if 0 <= self.saved_camera_index < len(self.available_cameras):
@@ -461,6 +551,10 @@ class AndroidControlApp:
                                                command=self.refresh_cameras)
         self.refresh_camera_button.grid(row=3, column=2, padx=(0, 10), pady=(5, 10), sticky=tk.W)
         
+        self.test_camera_button = ttk.Button(button_frame, text="测试摄像头", 
+                                           command=self.test_selected_camera)
+        self.test_camera_button.grid(row=3, column=3, padx=(0, 10), pady=(5, 10), sticky=tk.W)
+        
         # 状态栏
         self.status_var = tk.StringVar()
         self.status_var.set("就绪")
@@ -471,7 +565,7 @@ class AndroidControlApp:
     def setup_filename_ui(self, parent):
         """设置文件名编辑界面"""
         # 显示当前文件名
-        current_name = "-".join(self.filename_parts)
+        current_name = self.get_formatted_filename()
         
         # 第一部分：前缀
         ttk.Label(parent, text="前缀:").grid(row=0, column=0, sticky=tk.W, padx=(0, 5))
@@ -521,7 +615,7 @@ class AndroidControlApp:
         self.filename_parts[1] = self.number_var.get()
         self.filename_parts[2] = self.suffix_var.get()
         
-        full_name = "-".join(self.filename_parts)
+        full_name = self.get_formatted_filename()
         self.filename_display_var.set(full_name)
         
         # 自动保存配置（延迟保存，避免频繁写入）
@@ -589,6 +683,91 @@ class AndroidControlApp:
         
         self.log("摄像头列表已刷新")
         
+    def test_selected_camera(self):
+        """测试选中的摄像头"""
+        if not self.available_cameras:
+            self.log("没有可用的摄像头进行测试")
+            return
+            
+        camera_index = self.get_selected_camera_index()
+        self.log(f"正在测试摄像头 {camera_index}...")
+        
+        def test_camera():
+            try:
+                # 尝试不同的后端
+                backends_to_try = [cv2.CAP_ANY]
+                
+                # 如果检测时记录了后端，优先使用该后端
+                for camera in self.available_cameras:
+                    if camera['index'] == camera_index and 'backend' in camera:
+                        backends_to_try.insert(0, camera['backend'])
+                        break
+                
+                success = False
+                for backend in backends_to_try:
+                    try:
+                        self.log(f"尝试后端 {backend}...")
+                        cap = cv2.VideoCapture(camera_index, backend)
+                        
+                        if cap.isOpened():
+                            # 等待摄像头初始化
+                            import time
+                            time.sleep(0.2)
+                            
+                            # 尝试读取几帧
+                            frames_read = 0
+                            for i in range(5):
+                                ret, frame = cap.read()
+                                if ret:
+                                    frames_read += 1
+                                time.sleep(0.1)
+                            
+                            if frames_read > 0:
+                                width = cap.get(cv2.CAP_PROP_FRAME_WIDTH)
+                                height = cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
+                                fps = cap.get(cv2.CAP_PROP_FPS)
+                                
+                                if width <= 0 or height <= 0:
+                                    if frame is not None:
+                                        height, width = frame.shape[:2]
+                                
+                                self.log(f"✓ 摄像头 {camera_index} 测试成功！")
+                                self.log(f"  - 分辨率: {int(width)}x{int(height)}")
+                                self.log(f"  - 帧率: {fps:.1f}")
+                                self.log(f"  - 成功读取 {frames_read}/5 帧")
+                                success = True
+                            else:
+                                self.log(f"✗ 摄像头 {camera_index} 无法读取帧")
+                        else:
+                            self.log(f"✗ 无法打开摄像头 {camera_index}")
+                        
+                        cap.release()
+                        
+                        if success:
+                            break
+                            
+                    except Exception as e:
+                        if 'cap' in locals():
+                            try:
+                                cap.release()
+                            except:
+                                pass
+                        self.log(f"测试摄像头时发生错误: {e}")
+                        continue
+                
+                if not success:
+                    self.log(f"✗ 摄像头 {camera_index} 测试失败")
+                    self.log("建议：")
+                    self.log("- 确保摄像头未被其他程序占用")
+                    self.log("- 尝试重新插拔摄像头")
+                    self.log("- 点击'刷新摄像头'重新检测")
+                    
+            except Exception as e:
+                self.log(f"测试摄像头时发生错误: {e}")
+        
+        # 在后台线程中执行测试
+        threading.Thread(target=test_camera, daemon=True).start()
+        
     def increase_number(self):
         """增加编号"""
         try:
@@ -622,33 +801,71 @@ class AndroidControlApp:
     def start_preview(self):
         """启动预览"""
         try:
-            # 检查是否有虚拟环境
-            venv_python = "venv/bin/python"
-            if os.path.exists(venv_python):
-                python_path = "venv/lib/python*/site-packages"
-            else:
-                python_path = None
-            
             # 获取当前选择的摄像头索引
             camera_index = self.get_selected_camera_index()
             self.log(f"使用摄像头 {camera_index} 进行预览")
+            
+            # 尝试使用检测时成功的后端（如果有的话）
+            selected_backend = cv2.CAP_ANY
+            for camera in self.available_cameras:
+                if camera['index'] == camera_index and 'backend' in camera:
+                    selected_backend = camera['backend']
+                    break
                 
             # 初始化摄像头
-            self.preview_cap = cv2.VideoCapture(camera_index)
+            self.preview_cap = cv2.VideoCapture(camera_index, selected_backend)
+            if not self.preview_cap.isOpened():
+                # 如果指定后端失败，尝试默认后端
+                self.log(f"指定后端失败，尝试默认后端...")
+                self.preview_cap = cv2.VideoCapture(camera_index)
+                
             if not self.preview_cap.isOpened():
                 self.log(f"错误: 无法打开摄像头 {camera_index} 进行预览")
                 return
-                
-            # 设置与录制相同的参数
-            self.preview_cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-            self.preview_cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 400)
-            self.preview_cap.set(cv2.CAP_PROP_FPS, 240)
-            self.preview_cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 0.75)
-            self.preview_cap.set(cv2.CAP_PROP_EXPOSURE, -8)
             
+            # 先测试摄像头是否真的可用
+            ret, test_frame = self.preview_cap.read()
+            if not ret:
+                self.log(f"错误: 摄像头 {camera_index} 无法读取帧")
+                self.preview_cap.release()
+                return
+                
+            # 获取当前分辨率作为基准
+            current_width = self.preview_cap.get(cv2.CAP_PROP_FRAME_WIDTH)
+            current_height = self.preview_cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
+            current_fps = self.preview_cap.get(cv2.CAP_PROP_FPS)
+            
+            self.log(f"摄像头当前设置: {int(current_width)}x{int(current_height)} @ {current_fps:.1f}fps")
+            
+            # 尝试设置录制参数，但不强制要求成功
+            try:
+                self.preview_cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+                self.preview_cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 400)
+                self.preview_cap.set(cv2.CAP_PROP_FPS, 240)
+                
+                # 尝试设置曝光参数
+                try:
+                    self.preview_cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 0.75)
+                    self.preview_cap.set(cv2.CAP_PROP_EXPOSURE, -8)
+                except:
+                    self.log("注意: 无法设置曝光参数，将使用默认值")
+                
+            except Exception as e:
+                self.log(f"注意: 无法设置某些摄像头参数: {e}")
+            
+            # 获取实际设置后的参数
             actual_width = self.preview_cap.get(cv2.CAP_PROP_FRAME_WIDTH)
             actual_height = self.preview_cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
             actual_fps = self.preview_cap.get(cv2.CAP_PROP_FPS)
+            
+            # 如果获取的值无效，使用测试帧的实际尺寸
+            if actual_width <= 0 or actual_height <= 0:
+                if test_frame is not None:
+                    actual_height, actual_width = test_frame.shape[:2]
+                    self.log(f"使用测试帧获取实际分辨率: {int(actual_width)}x{int(actual_height)}")
+            
+            if actual_fps <= 0:
+                actual_fps = 30.0
             
             self.log(f"预览摄像头已启动: {int(actual_width)}x{int(actual_height)}, {actual_fps:.1f} FPS")
             
@@ -661,6 +878,9 @@ class AndroidControlApp:
             
         except Exception as e:
             self.log(f"启动预览失败: {str(e)}")
+            if hasattr(self, 'preview_cap') and self.preview_cap:
+                self.preview_cap.release()
+                self.preview_cap = None
             
     def stop_preview(self):
         """停止预览"""
@@ -1077,6 +1297,10 @@ class AndroidControlApp:
                                 if "文件保存成功。" in clean_line and self.last_recorded_video:
                                     # 录制完成，复制文件
                                     self.copy_recorded_video()
+                                    # 更新状态为录制完成
+                                    self.status_var.set("测量录制完成")
+                                    # 自动递增文件名编号
+                                    self.increment_filename_number()
                         
                         # 检查进程是否已结束（使用本地进程引用）
                         if process and process.poll() is not None:
@@ -1100,7 +1324,7 @@ class AndroidControlApp:
                 self.log(f"创建目录: {target_dir}")
             
             # 构建新文件名
-            custom_filename = "-".join(self.filename_parts) + ".mp4"
+            custom_filename = self.get_formatted_filename() + ".mp4"
             target_path = os.path.join(target_dir, custom_filename)
             
             # 复制文件
@@ -1162,12 +1386,11 @@ class AndroidControlApp:
                 else:
                     self.log(f"✗ 发送按键失败: {adb_result.stderr}")
                 
-                # 4. 等待录制完成
-                self.log("等待录制完成...")
-                self.record_process.wait()
-                self.log("✓ 录制完成")
-                    
-                self.status_var.set("测量录制完成")
+                # 4. 录制已开始，更新状态
+                self.log("录制已开始，等待完成...")
+                self.status_var.set("正在录制...")
+                
+                # 不等待子进程退出，让它继续运行以便进行下一次录制
                 
             except subprocess.TimeoutExpired:
                 self.log("操作超时")
@@ -1196,17 +1419,46 @@ class AndroidControlApp:
         
         if self.record_process:
             try:
+                # 首先尝试发送退出命令
                 if self.record_process.stdin and not self.record_process.stdin.closed:
-                    self.record_process.stdin.close()
-                if self.record_process.poll() is None:
-                    self.record_process.terminate()
-                    # 给进程一些时间来正常退出
                     try:
-                        self.record_process.wait(timeout=5)
-                        self.log("✓ 录制进程已正常退出")
-                    except subprocess.TimeoutExpired:
-                        self.record_process.kill()
-                        self.log("✓ 录制进程已强制终止")
+                        self.log("发送退出命令到录制进程...")
+                        self.record_process.stdin.write('q\n')
+                        self.record_process.stdin.flush()
+                        # 等待进程正常退出
+                        try:
+                            self.record_process.wait(timeout=3)
+                            self.log("✓ 录制进程已正常退出")
+                        except subprocess.TimeoutExpired:
+                            self.log("进程未响应退出命令，尝试终止...")
+                            self.record_process.terminate()
+                            try:
+                                self.record_process.wait(timeout=2)
+                                self.log("✓ 录制进程已终止")
+                            except subprocess.TimeoutExpired:
+                                self.record_process.kill()
+                                self.log("✓ 录制进程已强制终止")
+                    except (BrokenPipeError, OSError):
+                        # 管道已断开，直接终止进程
+                        if self.record_process.poll() is None:
+                            self.record_process.terminate()
+                            try:
+                                self.record_process.wait(timeout=3)
+                                self.log("✓ 录制进程已终止")
+                            except subprocess.TimeoutExpired:
+                                self.record_process.kill()
+                                self.log("✓ 录制进程已强制终止")
+                else:
+                    # stdin已关闭，直接终止进程
+                    if self.record_process.poll() is None:
+                        self.record_process.terminate()
+                        try:
+                            self.record_process.wait(timeout=3)
+                            self.log("✓ 录制进程已终止")
+                        except subprocess.TimeoutExpired:
+                            self.record_process.kill()
+                            self.log("✓ 录制进程已强制终止")
+                            
             except Exception as e:
                 self.log(f"停止录制时发生错误: {str(e)}")
             finally:
@@ -1217,6 +1469,39 @@ class AndroidControlApp:
         self.start_button.config(state=tk.DISABLED)
         self.stop_button.config(state=tk.DISABLED)
         self.log("录制已停止，可重新连接设备启动摄像头")
+        
+    def on_closing(self):
+        """程序关闭时的清理工作"""
+        self.log("正在关闭程序...")
+        
+        # 停止预览
+        if self.preview_active:
+            self.stop_preview()
+        
+        # 关闭录制进程
+        if self.record_process:
+            try:
+                if self.record_process.stdin and not self.record_process.stdin.closed:
+                    try:
+                        self.record_process.stdin.write('q\n')
+                        self.record_process.stdin.flush()
+                        self.record_process.wait(timeout=2)
+                    except:
+                        pass
+                if self.record_process.poll() is None:
+                    self.record_process.terminate()
+                    try:
+                        self.record_process.wait(timeout=2)
+                    except subprocess.TimeoutExpired:
+                        self.record_process.kill()
+            except:
+                pass
+                
+        # 保存配置
+        self.save_config()
+        
+        # 关闭窗口
+        self.root.destroy()
         
     def get_payload(self):
         """获取 Payload 文件"""
