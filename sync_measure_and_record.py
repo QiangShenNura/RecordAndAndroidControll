@@ -509,6 +509,10 @@ class AndroidControlApp:
                                         command=self.get_payload)
         self.payload_button.grid(row=0, column=2, padx=(0, 10), pady=5)
         
+        self.open_folder_button = ttk.Button(main_action_frame, text="打开文件夹", 
+                                           command=self.open_payload_folder)
+        self.open_folder_button.grid(row=0, column=3, padx=(0, 10), pady=5)
+        
         # ADB设备管理区域
         adb_frame = ttk.LabelFrame(control_frame, text="ADB设备管理", padding="5")
         adb_frame.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(0, 10))
@@ -1504,6 +1508,38 @@ class AndroidControlApp:
         
         # 关闭窗口
         self.root.destroy()
+        
+    def open_payload_folder(self):
+        """打开保存payloads的文件夹"""
+        try:
+            # 确保payloads文件夹存在
+            payload_dir = os.path.join(os.getcwd(), "payloads", "MagicMirror")
+            if not os.path.exists(payload_dir):
+                # 如果MagicMirror文件夹不存在，创建它
+                os.makedirs(payload_dir)
+                self.log(f"创建文件夹: {payload_dir}")
+            
+            # 根据操作系统打开文件夹
+            system = platform.system()
+            
+            if system == "Darwin":  # macOS
+                subprocess.run(["open", payload_dir])
+                self.log(f"✓ 已打开文件夹: {payload_dir}")
+            elif system == "Windows":
+                subprocess.run(["explorer", payload_dir])
+                self.log(f"✓ 已打开文件夹: {payload_dir}")
+            elif system == "Linux":
+                subprocess.run(["xdg-open", payload_dir])
+                self.log(f"✓ 已打开文件夹: {payload_dir}")
+            else:
+                self.log(f"✓ Payload文件夹路径: {payload_dir}")
+                messagebox.showinfo("文件夹路径", f"Payload文件夹路径:\n{payload_dir}")
+                
+        except Exception as e:
+            self.log(f"✗ 打开文件夹失败: {str(e)}")
+            # 如果打开失败，至少显示路径
+            payload_dir = os.path.join(os.getcwd(), "payloads", "MagicMirror")
+            messagebox.showinfo("文件夹路径", f"无法自动打开文件夹，请手动访问:\n{payload_dir}")
         
     def get_payload(self):
         """获取 Payload 文件"""
