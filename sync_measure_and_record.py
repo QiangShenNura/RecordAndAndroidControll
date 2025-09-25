@@ -1943,10 +1943,7 @@ class AndroidControlApp:
                                 self.log(f"  - {file}")
                         else:
                             self.log("下载目录为空")
-                    
-                    # 下载成功后自动增加视频文件名编号
-                    self.increment_filename_number()
-                            
+               
                     self.status_var.set("Payload 获取完成")
                 else:
                     self.log(f"✗ 下载失败: {pull_result.stderr}")
